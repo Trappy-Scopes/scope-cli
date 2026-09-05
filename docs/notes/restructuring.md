@@ -599,23 +599,41 @@ it has to happen *before* the code launches, before the scope is constructed,
 before the experiment environment is built. That is a layer that does not
 exist yet. The `./trappyscope` script was the beginning of it.
 
-**2026-09-05: the entry-point skeleton for this now exists**, ahead of the
-step sequence below. `pyproject.toml`'s `[project.scripts]` entry
-(`trappyscope = "trappyscopes.main:main"`) was broken — the target module
-didn't exist — and is now real. Two paths, both currently doing what
-`python -i main.py` already does (build the experiment environment, hand it
-to a console) since none of steps 0-4 below are built yet:
+**2026-09-05: built, twice.** First pass wired the entry point
+(`pyproject.toml`'s `trappyscope = "trappyscopes.main:main"` was broken — the
+target module didn't exist) but got the launcher's own scope wrong: its menu
+included opening a specific experiment and queueing a script, which are scope
+CLI concerns, and its UI (`prompt_toolkit`, full-screen) needed ~46 rows × 80
+cols and just showed "window too small" on an ordinary terminal.
 
-- `trappyscope` (bare) — fast track, no menu, no animation.
-- `trappyscope --launcher` — a full-screen animated menu (`launcher/`),
-  chlamy-dance loop on top, a hand-rolled selectable list below offering:
-  boot normally, open a specific experiment, queue a script, install, show
-  the intro, edit the config. Each wraps something that already existed as
-  a `core/argparser.py` flag.
+Both corrected. **The launcher is a layer above the scope CLI — it never
+opens an experiment or runs a script itself** (`launcher/utilities/boot.py`
+is the one place that responsibility hands off to `expenv.build()`). And the
+UI is `rich.live.Live(screen=False)`, not `prompt_toolkit`: it repaints a
+small, centered block in place — animation, title, menu — with no
+minimum-terminal-size gate, which is what the previous version actually
+needed fixed (the layout wasn't the bug; the full-screen library was).
+Keystrokes are read via stdlib `tty.setcbreak()` + `select()` polling so the
+animation keeps looping between keystrokes, for as long as the menu is open.
 
-Steps 0-4 below are the next layer to build *underneath* this entry point —
-`fast_track()`/the menu's "boot normally" action are exactly where they'll
-get inserted once written.
+Steps 0-4 below are now substantially built, as `launcher/utilities/`:
+
+- **`trappyscope`** (bare) and the menu's **"Launch normally"** are the same
+  code (`launch_normally.run()`): check config → sync config (if configured)
+  → re-check → repository status/sync → hand off.
+- **`trappyscope --launcher`** — the menu, also offering each step
+  standalone: **check configuration file** (YAML syntax only, `PyYAML`'s own
+  `problem_mark` gives the line/column — no schema-validation library
+  needed), **sync configuration file** (§7.2, via the now-general
+  `core/sync.py`, namespaced per scope), **repository utility** (status
+  table for everything in `config.git_dependencies`, via `GitPython` — not
+  new, already used in `core/bookkeeping/session.py` for the per-session
+  commit id — confirm before pulling), plus **install/setup, show the
+  intro, edit the config**, deferred, wrapping what already existed.
+
+Still open: **step 0, environment activation**, not addressed by either
+build. `core/sync.py` (new, replacing a dead `SyncEngine` stub) is the
+shared rsync/mount primitive now used by both this and `ExpSync`.
 
 **Order, revised 2026-09-05 — reasoned through, not the order first proposed:**
 
