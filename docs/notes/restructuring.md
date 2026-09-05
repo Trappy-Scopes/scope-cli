@@ -554,7 +554,7 @@ would otherwise be silent. So a missing-but-required block must raise a clear
 warning naming what was disabled. `confuse` may already have a mechanism for
 this — check before hand-rolling.
 
-### 7.2 `config_redact_fields`
+### 7.2 `config_redact_fields`, and what actually gets synced
 
 Documented, never implemented, and it matters: the `config_server` block
 rsyncs `trappyconfig.yaml` — which holds `username`/`password` in cleartext —
@@ -565,6 +565,32 @@ redacted fields are omitted. The motivating case is that **every experiment
 should carry a copy of the configuration it ran under**, so a run is
 reproducible from its own directory — but that copy must not carry the
 passwords or server addresses.
+
+**Superseded 2026-09-05: the sync target is the whole `~/trappyverse/`
+directory, not one file.** Config profiles are only one thing that lives
+there — device histories, databases, and shelves belong alongside them, and
+should be backed up the same way. **Decided:** a single `rsync` over the
+whole directory, run in both directions, keeping the latest copy of each
+file (`--update`/`-u` semantics both ways — pull then push, or push then
+pull; `-u` refuses to overwrite a newer file on the receiving side either
+way). Considered and rejected: splitting the directory by subfolder with a
+fixed direction per subfolder (config authored centrally and pulled,
+device state generated locally and pushed) — simpler to reason about, but
+not what was chosen.
+
+**One caveat worth knowing, not yet a blocker:** "latest copy" means latest
+by modification time, compared across machines that don't share a clock. If
+a scope's clock has drifted, an older edit with a newer mtime can still win.
+Not addressed now; worth a note if syncs ever produce a surprising result.
+
+**Follow-on, applied 2026-09-05:** `PhysicalObject`'s persistent `shelve`
+state (`hive/physical.py`, used by any device with `persistent: true` --
+`trap` in the live config) wrote directly to `~/<name>`, outside
+`trappyverse/` entirely, so folder-level sync would never have backed it up.
+Moved to `~/trappyverse/state/<name>`. **Not migrated automatically:** a
+shelve file from before this change, sitting at the old `~/<name>` path, is
+not picked up -- move it under `trappyverse/state/` by hand if it needs to
+survive.
 
 ### 7.3 The launcher (`./trappyscope`)
 
@@ -678,11 +704,11 @@ automatically.
 - **`__device_type__`** was never made to work. It stays unimplemented rather
   than half-present.
 
-### 9.3 Reopened: multiple named `ScopeAssembly:` profiles — undecided
+### 9.3 Resolved: no `abstraction:` keyword — separate config files instead
 
-Motivation: one config should be able to describe more than one hardware
+Motivation: one setup should be able to describe more than one hardware
 topology (a microscope vs. a computing-cluster node), selected rather than
-merged. Proposed grammar:
+merged. The nested-dict-plus-selector grammar originally proposed:
 
 ```yaml
 abstraction: microscope   # selector
@@ -691,7 +717,16 @@ ScopeAssembly:
   cluster:    {pico1: {...}}
 ```
 
-**Not decided; two concerns raised, one alternative on the table:**
+**Decided 2026-09-05: dropped, in favour of separate files** —
+`trappyconfig.microscope.yaml`, `trappyconfig.cluster.yaml`, common
+`Experiment:`/`config:` in a shared base, composed via `TrappyConfig`'s
+existing (unused) `confuse` source-layering through `config.config_files`.
+Each file is independently valid; there's no grammar whose shape depends on
+a sibling key, and so no version of the confusing mid-construction
+`KeyError` the nested form risked. These files live inside the
+`trappyverse/` folder along with everything else synced per §7.2.
+
+The concerns that led here, kept for the record:
 
 1. **Naming collision.** `abstraction:` already meant something else in this
    codebase's history (§2's live-config role-map, `__abstraction__()`) —
