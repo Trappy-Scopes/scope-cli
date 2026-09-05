@@ -45,11 +45,9 @@ MENU_ITEMS = [
 	("check", "Check configuration file"),
 	("sync", "Sync configuration file"),
 	("repos", "Repository utility"),
-	## "install" (Install / setup) is deliberately not listed here: it runs
-	## `pip install .` (non-editable), which silently replaces a dev's
-	## editable install and breaks `trappyscope` itself. Not reachable from
-	## the menu until launcher/utilities/installer.py is fixed to use
-	## `pip install -e .` instead. The module itself is untouched.
+	## Restored: core/installer/installer.py now uses `pip install -e .`,
+	## the bug that broke a dev's editable install is fixed.
+	("install", "Install / setup"),
 	("intro", "Show the introduction"),
 	("edit", "Edit the configuration file"),
 	("exit", "Exit"),
@@ -249,13 +247,14 @@ def run_launcher():
 	whether to return to the menu or leave -- the launcher keeps running
 	until the user explicitly does one or the other.
 	"""
-	from .utilities import (check_config, edit_config, intro,
+	from .utilities import (check_config, edit_config, installer, intro,
 							 launch_normally, repo_sync, sync_config)
 
 	MICRO_UTILITIES = {
 		"check": check_config.check,
 		"sync": sync_config.sync_trappyverse,
 		"repos": repo_sync.check_and_sync,
+		"install": installer.install,
 		"intro": intro.show,
 		"edit": edit_config.edit,
 	}

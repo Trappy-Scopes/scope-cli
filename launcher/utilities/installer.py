@@ -1,6 +1,9 @@
 """
-Install/setup. Deferred: wraps the existing Installer as-is for now; a
-fuller installer utility is future work, not this round.
+Install/setup. Thin wrapper -- the actual logic lives in
+core.installer.installer.Installer.do_all(), which now uses
+`pip install -e .` (was the bug behind this menu item being removed
+entirely for a while) and delegates hardware-profile sync to
+core.installer.environment.
 """
 
 
