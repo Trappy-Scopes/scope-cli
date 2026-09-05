@@ -35,6 +35,9 @@ config:
   config_files: []           # Append more configuration files
   ui_mode: interactive       # User interaction mode
   autostart_cli_after_reboot: false  # Reserved for a future feature. Not yet read by any code.
+  terminal_editor:           # Editor used to open the config file for editing (launcher's
+                              # "Edit the configuration file"). If unset: nano if installed,
+                              # else vi.
   venv:                      # Whether to use a virtual environment for 
       active: false          # Config block is active. The function is turned on.
       command: source ~/opt/miniconda3/bin/activate 
