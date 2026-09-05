@@ -588,17 +588,19 @@ exist yet. The `./trappyscope` script was the beginning of it.
    validation library rather than hand-rolling.
 2. **Sync the configuration with the config server**, before git-sync — not
    after. Reasoning: the *remote* configuration is the one that says whether
-   git-sync should even run. If step 3 ran first, a scope could git-sync on
+   git-sync should even run. If step 4 ran first, a scope could git-sync on
    stale instructions from a config the server has since changed (e.g.
    git-sync was deliberately disabled remotely). Read the server address from
    the local config, ask whether the stored configuration has changed, and if
-   so rewrite the local file. **Open risk, not yet resolved:** if this step
-   rewrites the config, the newly-fetched file has not itself been validated —
-   a corrupt push to the config server would brick every scope that syncs it
-   on next boot unless the freshly-written file is re-run through step 1
-   before continuing.
-3. **Git-sync the declared repositories**, including this codebase, now
-   acting on whatever step 2 left in place.
+   so rewrite the local file.
+3. **Re-validate.** Resolves the gap step 2 opens: a file rewritten from the
+   server has not itself been checked. Re-run step 1's validator against the
+   freshly-written file before anything acts on it — otherwise a corrupt push
+   to the config server would brick every scope that syncs it, silently, on
+   its next boot. Confirmed as its own step rather than a loop-back into step
+   1, so a bad fetch fails loudly right here instead of somewhere later.
+4. **Git-sync the declared repositories**, including this codebase, now
+   acting on whatever step 2 left in place and step 3 confirmed was sound.
 
 ---
 
@@ -689,44 +691,46 @@ the lookup is absolute rather than relative to the working directory.
 
 ---
 
-## 11. Four-way configuration tabulation
+## 11. Three-way configuration tabulation
 
-For review, not yet acted on. Four sources exist, not three — a fourth
-turned up while tracing every reader: `core/permaconfig/exempler.py`, an
-unimported reference config that matches the **live** convention exactly
-(`devices:`, `config.expdir`, `config.file_server`, `config.git_dependencies`,
-`abstraction:` singular). It's included because it's independent evidence
-that the live convention isn't a one-off drift on this particular machine —
-whoever wrote `exempler.py` was working from the same convention the code
-and all eight scopes use.
+For review, not yet acted on. Three canonical sources: the live config, the
+template, and the README.
 
-There is also a fifth, older convention, found and dismissed: `core/sync.py`
-(`SyncEngine`) reads `deviceid["git_sync"]` and `deviceid["file_server"]` as
-flat top-level keys with no `config:` nesting at all, and imports a
-`config.common` module that does not exist anywhere in this repository. It
-is unimported by anything live and cannot run. Included here only as
-evidence of a still-earlier layout, not as a candidate.
+!!! note "`exempler.py` corrected"
+    `core/permaconfig/exempler.py` is not independent evidence of anything —
+    it's kept as the literal copy-source manually deployed onto M1 and M8, for
+    practicality. It matches the live convention exactly because it *is* a
+    live convention, not because two people separately converged on the same
+    design. Dropped as its own column below; where it matters is that the
+    old convention is running on at least three machines (this one, M1, M8),
+    not just this dev machine.
+
+    Also found and dismissed while tracing readers: `core/sync.py`
+    (`SyncEngine`), a still-older convention (`deviceid["git_sync"]` as a flat
+    top-level key, no `config:` nesting) that imports a `config.common` module
+    which does not exist anywhere in this repository. Unimported, cannot run.
+    Noted only as evidence of an earlier layout, not a candidate.
 
 **Target column reflects the 2026-09-05 correction in §2.1: the template
 (and README) direction is what gets built.**
 
-| Field | Live config + code | `exempler.py` | Template (target) | README | Verdict |
-|---|---|---|---|---|---|
-| Device block | `devices:` | `devices:` | `ScopeAssembly:` | `ScopeAssembly:` | **Rename**, see §12 |
-| Host's own processor group | not declared; auto-created as `"node"` in `ScopeAssembly.__init__` | same | template shows a `<hostname>` entry *inside* `ScopeAssembly:` | same, §"Define devices" | **Open design question**, see §12 |
-| Abstraction | `abstraction:` (singular), half-wired | `abstraction:` (singular) | absent | not in the documented schema | **Drop** — already decided, §9.2 |
-| Experiment directory | `config.expdir` | `config.expdir` | `Experiment.exp_dir` | `Experiment.exp_dir` | **Rename**, see §12 |
-| Experiment data sync | `config.file_server` | `config.file_server` | `Experiment.file_server` | `Experiment.file_server` | **Rename + move**, see §12 |
-| Config-file sync | absent entirely | absent | `config.config_server` | `config.config_server` | **New feature to build** (§7.3 step 2), not a rename |
-| Git sync | `config.git_sync` (bare bool) + `config.git_dependencies` (`{url: local_path}`) | same | `config.git_sync: {active, command, repos: []}` (`repos` is a list of local dirs, no URLs) | same | **Reshape, not rename** — different data shape, see §12 |
-| `active:` enforcement | ad hoc (`ExpSync` only); `git_sync` truthy-dict bug | n/a | assumed everywhere | documented as universal | **Depends on §7.1 landing first** |
-| `metaclass` / `read_method` / `write_method` | absent | absent | absent from the template's own example | documented in prose only | **Out of scope here** — tracked in §8, deferred |
-| `protocols_dir`, `calibration_dir`, `exp_dir_structure`, `exp_report`, `eid_generator` | absent, unread | absent | present | present | **Not a rename** — these need new code to do anything, see §12 |
-| `Experiment.scripts_dirs` | present, read by `scriptengine.py:95` | absent | absent | absent | **Template gap** — add the key, no code change |
-| `startup_recipie` | absent (falls back to `freestyle`) | absent | present, correct | describes the concept | **Already done** (Phase 3) |
-| `lit` (proxy device) | top-level, outside `devices:`; `kind: proxy` isn't an importable path | same placement, same `kind: proxy` | not present as an example | proxy devices not covered by the documented schema | **Blocked on §9's tree/proxy design** — not a simple migration |
-| `autostart_cli_after_reboot` | present, read nowhere | present | absent | absent | Dead field either way — no action |
-| `type:` (e.g. `microscope`) | present, read nowhere | present | present (`generic-scope` placeholder) | documented as "selection of the abstraction" but never wired to select anything | Aspirational, unimplemented; not blocking |
+| Field | Live config + code | Template (target) | README | Verdict |
+|---|---|---|---|---|
+| Device block | `devices:` | `ScopeAssembly:` | `ScopeAssembly:` | **Rename**, see §12 |
+| Host's own processor group | not declared; auto-created as `"node"` in `ScopeAssembly.__init__` | template shows a `<hostname>` entry *inside* `ScopeAssembly:` | same, §"Define devices" | **Open design question**, see §12 |
+| Abstraction | `abstraction:` (singular), half-wired | absent | not in the documented schema | **Drop** — already decided, §9.2 |
+| Experiment directory | `config.expdir` | `Experiment.exp_dir` | `Experiment.exp_dir` | **Rename**, see §12 |
+| Experiment data sync | `config.file_server` | `Experiment.file_server` | `Experiment.file_server` | **Rename + move**, see §12 |
+| Config-file sync | absent entirely | `config.config_server` | `config.config_server` | **New feature to build** (§7.3 step 2), not a rename |
+| Git sync | `config.git_sync` (bare bool) + `config.git_dependencies` (`{url: local_path}`) | `config.git_sync: {active, command, repos: []}` (`repos` is a list of local dirs, no URLs) | same | **Reshape, not rename** — different data shape, see §12 |
+| `active:` enforcement | ad hoc (`ExpSync` only); `git_sync` truthy-dict bug | assumed everywhere | documented as universal | **Depends on §7.1 landing first** |
+| `metaclass` / `read_method` / `write_method` | absent | absent from the template's own example | documented in prose only | **Out of scope here** — tracked in §8, deferred |
+| `protocols_dir`, `calibration_dir`, `exp_dir_structure`, `exp_report`, `eid_generator` | absent, unread | present | present | **Not a rename** — these need new code to do anything, see §12 |
+| `Experiment.scripts_dirs` | present, read by `scriptengine.py:95` | absent | absent | **Template gap** — add the key, no code change |
+| `startup_recipie` | absent (falls back to `freestyle`) | present, correct | describes the concept | **Already done** (Phase 3) |
+| `lit` (proxy device) | top-level, outside `devices:`; `kind: proxy` isn't an importable path | not present as an example | proxy devices not covered by the documented schema | **Blocked on §9's tree/proxy design** — not a simple migration |
+| `autostart_cli_after_reboot` | present, read nowhere | absent | absent | Dead field either way — no action |
+| `type:` (e.g. `microscope`) | present, read nowhere | present (`generic-scope` placeholder) | documented as "selection of the abstraction" but never wired to select anything | Aspirational, unimplemented; not blocking |
 
 ---
 
