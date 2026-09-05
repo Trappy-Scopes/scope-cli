@@ -118,7 +118,41 @@ def _version_line():
 		return None
 
 
-def _render(menu, elapsed, version=None):
+def _venv_line():
+	"""
+	"venv: <actual running environment>  (set in TrappyConfig)" or
+	"(not set)" -- the two can disagree (e.g. you're standing in the right
+	conda env by habit, but config.venv was never declared, so a *different*
+	machine relying on it to auto-activate would get nothing). Reads the
+	raw config file directly rather than instantiating TrappyConfig, which
+	has side effects (logging setup, a "config set" printout) not wanted on
+	every menu redraw.
+	"""
+	import sys
+	env_name = (os.environ.get("CONDA_DEFAULT_ENV")
+				or os.environ.get("VIRTUAL_ENV")
+				or sys.prefix)
+
+	from core.permaconfig.config import TrappyConfig
+	declared = False
+	for candidate in TrappyConfig.default_paths:
+		if os.path.exists(candidate):
+			try:
+				import yaml
+				with open(candidate) as f:
+					config = yaml.safe_load(f) or {}
+				declared = TrappyConfig.optional_block(config, "config", "venv") is not None
+			except Exception:
+				pass
+			break
+
+	line = Text(f"venv: {env_name}  ", justify="center")
+	line.append("(set in TrappyConfig)" if declared else "(not set)",
+				style="green" if declared else "red")
+	return line
+
+
+def _render(menu, elapsed, version=None, venv_line=None):
 	t = elapsed % dance.DURATION
 	animation = Text.from_ansi(dance.render(dance.frame(t, border=False)), no_wrap=True)
 
@@ -126,6 +160,8 @@ def _render(menu, elapsed, version=None):
 	header = [title]
 	if version:
 		header.append(Text(version, style="dim", justify="center"))
+	if venv_line is not None:
+		header.append(venv_line)
 
 	menu_lines = Text()
 	for i, (key, label) in enumerate(menu.items):
@@ -157,15 +193,16 @@ def _show_menu():
 	choice = None
 	start = time.monotonic()
 	version = _version_line()
+	venv_line = _venv_line()
 
 	fd = sys.stdin.fileno()
 	old_settings = termios.tcgetattr(fd)
 	try:
 		tty.setcbreak(fd)
-		with Live(_render(menu, 0, version), console=console, screen=False,
+		with Live(_render(menu, 0, version, venv_line), console=console, screen=False,
 				  auto_refresh=False, transient=True) as live:
 			while True:
-				live.update(_render(menu, time.monotonic() - start, version), refresh=True)
+				live.update(_render(menu, time.monotonic() - start, version, venv_line), refresh=True)
 
 				ready, _, _ = select.select([fd], [], [], 1 / FPS)
 				if not ready:
