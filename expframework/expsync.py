@@ -12,6 +12,7 @@ import datetime
 
 from core.uid import uid
 from core.permaconfig.sharing import Share
+from core.permaconfig.config import TrappyConfig
 from core.bookkeeping.user import User
 
 class ExpSync:
@@ -26,13 +27,20 @@ class ExpSync:
 	destination_fmt = None
 
 	def configure(scopeconfig):
-		ExpSync.active = scopeconfig["config"]["file_server"]["active"]
-		ExpSync.server = scopeconfig["config"]["file_server"]["server"]
-		ExpSync.share = scopeconfig["config"]["file_server"]["share"]
-		ExpSync.username = scopeconfig["config"]["file_server"]["username"]
-		ExpSync.password = scopeconfig["config"]["file_server"]["password"]
+		## `file_server` currently lives under `config:`; the target format
+		## is `Experiment.file_server` (docs/notes/restructuring.md §12 #4),
+		## not yet migrated.
+		block = TrappyConfig.optional_block(scopeconfig, "config", "file_server")
+		if block is None:
+			ExpSync.active = False
+			return
 
-		ExpSync.destination_fmt = scopeconfig["config"]["file_server"]["destination"]
+		ExpSync.active = True
+		ExpSync.server = block["server"]
+		ExpSync.share = block["share"]
+		ExpSync.username = block["username"]
+		ExpSync.password = block["password"]
+		ExpSync.destination_fmt = block["destination"]
 
 
 

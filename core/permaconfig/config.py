@@ -106,6 +106,29 @@ class TrappyConfig(confuse.Configuration):
 		print(Panel(f"{render(3)}\n[bold]Config path: {filename}", title="New configuration"))
 	
 
+	@staticmethod
+	def optional_block(config_dict, *path):
+		"""
+		Walk `path` through an already-materialised config dict (e.g. from
+		`TrappyConfig().get()`) and return whatever is found there, or None if
+		any step is missing, or if what's found is a block that declares
+		`active: false`. Absence and explicit deactivation are the same
+		signal to a consumer: don't run this feature.
+
+		Only meaningful for the `active:`-flagged block shape (venv,
+		file_server, config_server, ...). A bare boolean gate like the
+		current `git_sync` is a different shape and isn't affected by this --
+		a non-dict value found at `path` is returned as-is.
+		"""
+		node = config_dict
+		for key in path:
+			if not isinstance(node, dict) or key not in node:
+				return None
+			node = node[key]
+		if isinstance(node, dict) and node.get("active") is False:
+			return None
+		return node
+
 	def panel(self):
 		"""
 		Draw a panel with all the nested configuration.
