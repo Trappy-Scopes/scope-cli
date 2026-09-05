@@ -250,6 +250,68 @@ def _display_linux():
     return devices
 
 
+# ------------------------------------------------------------- storage ---
+
+_SKIP_FSTYPES = {
+    "devfs", "autofs", "tmpfs", "proc", "sysfs", "overlay", "squashfs",
+    "devtmpfs", "cgroup", "cgroup2",
+}
+
+
+@category("storage")
+def _storage():
+    """
+    Every genuinely separate mounted disk -- root plus anything actually
+    plugged in, not the internal bookkeeping of one physical disk. Answers
+    "what storage is attached" the same way the other categories answer
+    "what's attached": something plugged in after the fact (a new SSD)
+    should show up here.
+
+    Filters two kinds of noise, or this list turns into everything the OS
+    happens to mount rather than what a person would call "a disk": pseudo-
+    filesystems (_SKIP_FSTYPES: devfs, tmpfs, proc/sysfs, container overlay
+    layers -- never real storage), and, on macOS specifically, the several
+    /System/Volumes/* entries (VM, Preboot, Update, ...) that are internal
+    slices of the *same* physical disk "/" already reports.
+
+    macOS also splits that same physical disk into a read-only "/" (a
+    synthetic firmlink snapshot) and a read-write /System/Volumes/Data --
+    both report the same disk, but "/" alone shows only the tiny system
+    snapshot's own usage, not the real figure. When both are present, "/"
+    is dropped and Data's real usage is kept, relabelled "/" -- what a
+    person means by "the root disk" is the whole thing, not either
+    half's own internal name for it.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return []
+
+    partitions = list(psutil.disk_partitions(all=False))
+    mountpoints = {p.mountpoint for p in partitions}
+    macos_split_root = "/" in mountpoints and "/System/Volumes/Data" in mountpoints
+
+    devices = []
+    for part in partitions:
+        if part.fstype in _SKIP_FSTYPES:
+            continue
+        if part.mountpoint.startswith("/System/Volumes/") and part.mountpoint != "/System/Volumes/Data":
+            continue
+        if macos_split_root and part.mountpoint == "/":
+            continue
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+        except OSError:
+            continue
+        label = "/" if part.mountpoint == "/System/Volumes/Data" else part.mountpoint
+        gb = 1024 ** 3
+        devices.append({
+            "label": label,
+            "detail": f"{usage.used / gb:.1f}/{usage.total / gb:.1f} GB used",
+        })
+    return devices
+
+
 # ---------------------------------------------------------------- top ---
 
 def collect(categories=None):

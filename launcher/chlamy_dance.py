@@ -32,7 +32,7 @@ DURATION = 6.0         # seconds, seamless loop
 INK = (243, 242, 242)      # white cell rim
 GREEN = (61, 220, 107)     # cell body
 DEEP = (31, 156, 74)       # body edge shading
-EYE = (255, 255, 255)      # eyespot
+EYE = (0, 0, 0)            # eyespot
 CIL = (255, 255, 255)      # flagella (cilia)
 FRAME = (92, 89, 87)       # terminal frame
 
@@ -116,9 +116,9 @@ def draw_body(g, cx, cy, rx, ry, scale=1.0):
     ex, ey = cx + rx * 0.5, cy - ry * 0.3
     eye_w, eye_h = max(1, round(2 * scale)), max(0, round(1 * scale))
     for y in range(-eye_h, eye_h + 1):
-        for x in range(-eye_w, eye_w + 1):
-            if math.hypot(x / (eye_w + 0.2), y / (eye_h + 0.1)) > 1:
-                continue
+        for x in range(-eye_w, eye_w):  # exclusive of the rightmost cell --
+            if math.hypot(x / (eye_w + 0.2), y / (eye_h + 0.1)) > 1:  # narrower eyespot,
+                continue                                              # that cell stays body-green
             g.put(ex + x, ey + y, '█', EYE)
 
 

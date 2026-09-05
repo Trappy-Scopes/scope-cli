@@ -67,7 +67,10 @@ class Menu:
 	animation.
 	"""
 
-	WINDOW_SIZE = 6
+	## 12, not 6: the visible window is now laid out two columns wide (see
+	## _render()), so this covers two 6-row columns -- enough for all 9
+	## current items with room to grow before scrolling kicks in at all.
+	WINDOW_SIZE = 12
 
 	def __init__(self, items):
 		self.items = items
@@ -191,23 +194,65 @@ def _render(menu, elapsed, version=None, venv_line=None):
 
 	visible_items, offset, more_above, more_below = menu.visible()
 
-	menu_lines = Text()
-	if more_above:
-		menu_lines.append("↑ more above\n", style="dim")
-	for i, (key, label) in enumerate(visible_items, start=offset):
-		selected = i == menu.index
-		prefix = "> " if selected else "  "
-		if selected:
-			style = "bold black on bright_green"
-		elif key == "exit":
-			style = "grey58"
-		else:
-			style = "green"
-		menu_lines.append(f"{prefix}{label}\n", style=style)
-	if more_below:
-		menu_lines.append("↓ more below\n", style="dim")
+	## Two columns, column-major: the first half of the visible window down
+	## the left column, the rest down the right -- reads the same order the
+	## flat item list is already in, so up()/down() (index-based, unaware of
+	## columns) still lands where you'd expect.
+	##
+	## Built as one plain multi-line Text, not a Table: Align.center (below)
+	## centers each rendered *line* of the group independently, based on
+	## that line's own width -- not the block as a whole. The animation and
+	## header lines stay centered "for free" only because every animation
+	## row is the same fixed width and the header texts set justify=
+	## "center" themselves; a Table's rows don't get measured this way at
+	## all, and unpadded menu rows of differing length each land at a
+	## different, wrong center. Every row here is therefore right-padded to
+	## the SAME total width, so Align computes the same (correct) offset
+	## for every one of them.
+	entries = list(enumerate(visible_items, start=offset))
+	split = (len(entries) + 1) // 2
+	left, right = entries[:split], entries[split:]
 
-	return Align.center(Group(animation, Text(), *header, Text(), menu_lines))
+	## Fixed widths, computed from the *whole* item list rather than just
+	## the visible window, so the column boundaries don't shift as the menu
+	## scrolls.
+	col_width = max(len(label) for _, label in menu.items) + 2  # +2: the "> "/"  " prefix
+	row_width = col_width + 4 + col_width  # 4: the gap between columns
+
+	def entry_style(key, i):
+		if i == menu.index:
+			return "bold black on bright_green"
+		if key == "exit":
+			return "grey58"
+		return "green"
+
+	menu_lines = Text()
+	for row in range(len(left)):
+		i, (key, label) = left[row]
+		prefix = "> " if i == menu.index else "  "
+		menu_lines.append(f"{prefix}{label}".ljust(col_width), style=entry_style(key, i))
+		menu_lines.append("    ")
+		if row < len(right):
+			ri, (rkey, rlabel) = right[row]
+			rprefix = "> " if ri == menu.index else "  "
+			menu_lines.append(f"{rprefix}{rlabel}".ljust(col_width), style=entry_style(rkey, ri))
+		else:
+			menu_lines.append("".ljust(col_width))
+		menu_lines.append("\n")
+
+	scroll_hints = []
+	if more_above:
+		scroll_hints.append("↑ more above")
+	if more_below:
+		scroll_hints.append("↓ more below")
+
+	body = [animation, Text(), *header, Text(), menu_lines]
+	if scroll_hints:
+		body.append(Text("   ".join(scroll_hints), style="dim", justify="center"))
+	body.append(Text())
+	body.append(Text("↑/↓ move   enter select   Esc/q quit", style="dim", justify="center"))
+
+	return Align.center(Group(*body))
 
 
 def _show_menu():
