@@ -30,3 +30,24 @@ def fast_track():
 def run_launcher():
 	from .tui import run_launcher as _run_launcher
 	_run_launcher()
+
+
+def main():
+	"""
+	The `trappyscope` installed console script (see pyproject.toml
+	[project.scripts]). Lives here, not in core/ -- this function imports
+	expenv/expframework/hive by way of fast_track()/run_launcher(), and core
+	must not import upward into them (docs/notes/restructuring.md §2.3).
+
+	core.argparser is imported first because it's the module that actually
+	parses sys.argv (a side-effecting import, by existing convention -- see
+	core/argparser.py) and some of its flags (--install, --intro, ...) exit()
+	before this function would ever branch.
+	"""
+	import core.argparser  # noqa: F401
+	from core.permaconfig.sharing import Share
+
+	if Share.argparse.get("launcher"):
+		run_launcher()
+	else:
+		fast_track()
