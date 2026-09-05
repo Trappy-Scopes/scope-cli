@@ -49,6 +49,64 @@ def _run_json(args):
 
 # ------------------------------------------------------------- serial ---
 
+def _probe_micropython(port):
+    """
+    Connect to a MicroPython device over serial and read its version and,
+    if core/external/pyboard.py's raw-REPL connection -- the same
+    mechanism hive/processorgroups/micropython.py already uses -- and
+    always disconnects afterward, success or failure. One exec_() call
+    does both reads at once (each on its own printed line) rather than
+    two round trips.
+
+    Best-effort: any failure (not actually MicroPython, port already
+    open elsewhere, a real timeout) returns None rather than raising --
+    this runs automatically for every "Board in FS mode" port the
+    device tree finds, so one unresponsive port must not take the
+    whole tree down with it.
+    """
+    try:
+        from core.external import pyboard
+    except ImportError:
+        return None
+
+    device = None
+    try:
+        device = pyboard.Pyboard(port, 115200)
+        device.enter_raw_repl()
+        probe = (
+            "import os\n"
+            "print(os.uname().release)\n"
+            "try:\n"
+            "    import board\n"
+            "    print(getattr(board, 'circuit_id', 'unknown'))\n"
+            "except ImportError:\n"
+            "    print('none')\n"
+        )
+        output = device.exec_(probe).decode().strip().splitlines()
+    except Exception:
+        return None
+    finally:
+        if device is not None:
+            try:
+                device.exit_raw_repl()
+            except Exception:
+                pass
+            try:
+                device.close()
+            except Exception:
+                pass
+
+    mpy_version = output[0].strip() if len(output) > 0 else None
+    circuit_id = output[1].strip() if len(output) > 1 else "none"
+
+    if not mpy_version:
+        return None
+    detail = f"MicroPython {mpy_version}"
+    if circuit_id != "none":
+        detail += f" · pico_firmware: {circuit_id}"
+    return detail
+
+
 @category("serial")
 def _serial():
     try:
@@ -58,6 +116,10 @@ def _serial():
     devices = []
     for p in list_ports.comports():
         detail = None if p.description in (None, "n/a") else p.description
+        if detail and "board in fs mode" in detail.lower():
+            probed = _probe_micropython(p.device)
+            if probed:
+                detail = f"{detail} · {probed}"
         devices.append({"label": p.device, "detail": detail})
     return devices
 
