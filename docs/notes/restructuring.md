@@ -480,3 +480,184 @@ absorption coherent rather than just a bigger pile.
 - **`scripts/`** stays in-tree — a small curated script module is genuinely
   useful here — but the boundary between "example" and "production protocol"
   is undefined.
+
+---
+
+## 7. The configuration layer
+
+Decisions taken 2026-09-05. The agreed order of work is **bottom-up**: settle
+the configuration layer first, then let the experiment and the scope inherit
+those changes.
+
+!!! danger "`default_config.yaml` is the master document, and it does not boot"
+    The template is the file copied to a new scope, so it is the spec. But it
+    has drifted from both the code and every deployed config:
+
+    | `default_config.yaml` says | Code reads | Live configs use |
+    |---|---|---|
+    | `ScopeAssembly:` | `scopeconfig["devices"]` | `devices:` |
+    | `Experiment.exp_dir` | `config["config"]["expdir"]` | `config.expdir` |
+    | `Experiment.file_server` | `config["config"]["file_server"]` | `config.file_server` |
+    | `config.git_sync.repos` | `config["config"]["git_dependencies"]` | `config.git_dependencies` |
+    | *(absent)* | `config["Experiment"]["scripts_dirs"]` | `Experiment.scripts_dirs` |
+
+    The code and the eight deployed scopes agree with each other; the template
+    and the README are the outliers. Copying `default_config.yaml` to a new
+    scope today raises `KeyError: 'devices'` and mounts nothing.
+
+    **Fix direction: bring the template up to what the code and the working
+    scopes do.** Changing the code to match the template would break M1–M8.
+
+    The README is a design document — wishful thinking, not a spec. Where the
+    two disagree, the template wins; where the template and the code disagree,
+    the code and the live configs win until deliberately migrated.
+
+Two more drifts of the same kind, both currently harmless by accident:
+
+- `assembly.py:64` reads `scopeconfig["abstractions"]` (plural); live configs
+  write `abstraction:` (singular). Dead only because `freestyle` calls
+  `ScopeAssembly(scopeid)` with no config, so the branch never executes.
+- At least one live config declares `lit` at top level rather than under
+  `devices:`, so it never mounts.
+
+### 7.1 `active:` belongs in TrappyConfig, not in each consumer
+
+Today `active:` is honoured ad hoc: `ExpSync` checks `file_server.active`,
+while `startup.py:12` does `if scopeconfig["config"]["git_sync"]:` on a dict,
+which is always truthy — so `git_sync.active: false` is silently ignored. For
+devices nothing checks it at all.
+
+**Decision:** implement it once, at the `TrappyConfig` level. A block with
+`active: false` is simply *not exposed* by the config object — it is still in
+the file, but consumers never see it. Absence of the key means `true`.
+
+Consequence to handle deliberately: this lets a user disable configuration
+that is actually required (an experiment directory, say), and the failure
+would otherwise be silent. So a missing-but-required block must raise a clear
+warning naming what was disabled. `confuse` may already have a mechanism for
+this — check before hand-rolling.
+
+### 7.2 `config_redact_fields`
+
+Documented, never implemented, and it matters: the `config_server` block
+rsyncs `trappyconfig.yaml` — which holds `username`/`password` in cleartext —
+to a share.
+
+**Intent:** when a *copy* of the `TrappyConfig` object is requested, the
+redacted fields are omitted. The motivating case is that **every experiment
+should carry a copy of the configuration it ran under**, so a run is
+reproducible from its own directory — but that copy must not carry the
+passwords or server addresses.
+
+### 7.3 The launcher (`./trappyscope`)
+
+`git_sync` was never enabled because there was no correct place to call it:
+it has to happen *before* the code launches, before the scope is constructed,
+before the experiment environment is built. That is a layer that does not
+exist yet. The `./trappyscope` script was the beginning of it.
+
+What the launcher should do, in order, before handing off to `main.py`:
+
+1. **Validate the configuration and produce a readable traceback.** Raw
+   `PyYAML` errors do not say *where* the mistake is, which makes a broken
+   config painful to diagnose on a headless scope. Worth pulling in a schema
+   validation library rather than hand-rolling.
+2. **Sync the configuration with the config server.** Read the server address
+   from the local config, ask whether the stored configuration has changed,
+   and if so rewrite the local file and reload. The point is a single place to
+   edit the configuration of every microscope at once: each scope picks up its
+   new configuration on next boot. (Whether to re-run the whole loop after a
+   reload, or apply once and continue, is open — probably apply once.)
+3. **Git-sync the declared repositories**, including this codebase, so every
+   scope updates itself on launch.
+4. **Activate the declared environment.** The `venv` block already exists in
+   the template. This must be package-manager agnostic — conda here, but
+   possibly `venv` or something else on another machine — so it needs a crude,
+   general method of finding the right Python rather than a clean one.
+
+---
+
+## 8. Device coercion — `metaclass`, `read_method`, `write_method`
+
+**Noted, not scheduled.** These are optional and explicitly not being built
+yet; this section exists so the design is not lost.
+
+The purpose is the project's central claim — *"seamlessly interfaces with any
+existing python package"*. Today `kind:` must point at a class that already
+has the right shape, so integrating a foreign library means hand-writing a
+wrapper. The coercion mechanism removes that: **you should not need to write
+a wrapper for most foreign code.**
+
+`kind:` calls a constructor, and that is all that is required. On top of that:
+
+- **`read_method` / `write_method` alias a foreign method into the Trappy
+  contract.** Calling `read()` on an object that has no `read()` dispatches to
+  whatever method the config named. The declared `args`/`kwargs` are bound
+  with `functools.partial`.
+- **Declaring them elevates the object** into a detector or an actuator.
+- **`metaclass:` declares intent, and is validated against the methods:**
+
+    | Declared metaclass | Requires |
+    |---|---|
+    | detector | `read_method` |
+    | actuator | `read_method` **and** `write_method` |
+
+    A declaration that does not meet its requirement is a configuration
+    error, caught at mount time rather than at first use.
+
+- A **`config_method`** is wanted on the same principle.
+
+This belongs in the scope-parts layer, alongside the ABCs.
+
+---
+
+## 9. `tree` and `devices` are not the same thing
+
+They are currently two flat dicts holding identical objects, which is why the
+distinction looks redundant. It is not — it was never finished.
+
+- **`devices`** is the flat list of devices attached to the scope.
+- **`tree`** is meant to be *structured*. Proxy devices constructed by another
+  device belong inside that device's namespace: the objects `scope.pico`
+  creates during handshake should live under `pico`, not at top level.
+
+### 9.1 Aggregates
+
+The tree should also carry **aggregate nodes**. Given four motors mounted as
+`scope.motor1` … `scope.motor4`, an aggregate `set` becomes a node covering
+all four, so that `scope.set.stop()` stops every motor in it — one call
+fanning out across the group, while the individual devices remain
+addressable.
+
+This already exists as `ActionSet` in `pico_firmware`, but it is hardcoded:
+the motors are declared into the group by hand at construction. Membership has
+to be declared *somewhere*, but it should not have to be hardcoded — and for
+the proxy objects a device creates during handshake, it can be derived
+automatically.
+
+### 9.2 Smaller fixes agreed
+
+- **Device names need a guard.** `add_device` does `setattr(self, name, obj)`
+  with no check, so a device called `open`, `close` or `devices` silently
+  overwrites the assembly's own API. Either reject names that collide with an
+  existing attribute, or keep a reserved-word list — undecided which is
+  better.
+- **`abstraction` goes.** The concept is not worth keeping; the ignored
+  `open(..., abstraction=)` parameter and `__abstraction__()` go with it.
+- **The hardcoded `sys.path.append` at `assembly.py:112` goes.** It points at
+  one machine and contains a stray quote, so it has never done anything.
+- **`__device_type__`** was never made to work. It stays unimplemented rather
+  than half-present.
+
+---
+
+## 10. On the config file's location
+
+`TrappyConfig` looks in `~/trappyverse/trappyconfig.yaml` first and falls back
+to `~/trappyconfig.yaml`. This is legacy and intent sitting side by side: the
+intent is that everything lives in `trappyverse/`, but on most scopes today
+the file is still in the home directory. The fallback is deliberate and stays
+until the files are moved.
+
+Separately, the utility is meant to be callable from anywhere, which is why
+the lookup is absolute rather than relative to the working directory.
