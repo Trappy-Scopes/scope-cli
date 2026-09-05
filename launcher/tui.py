@@ -45,6 +45,7 @@ MENU_ITEMS = [
 	("check", "Check configuration file"),
 	("sync", "Sync configuration file"),
 	("repos", "Repository utility"),
+	("devicetree", "Device tree"),
 	## Restored: core/installer/installer.py now uses `pip install -e .`,
 	## the bug that broke a dev's editable install is fixed.
 	("install", "Install / setup"),
@@ -247,13 +248,14 @@ def run_launcher():
 	whether to return to the menu or leave -- the launcher keeps running
 	until the user explicitly does one or the other.
 	"""
-	from .utilities import (check_config, edit_config, installer, intro,
-							 launch_normally, repo_sync, sync_config)
+	from .utilities import (check_config, device_tree, edit_config, installer,
+							 intro, launch_normally, repo_sync, sync_config)
 
 	MICRO_UTILITIES = {
 		"check": check_config.check,
 		"sync": sync_config.sync_trappyverse,
 		"repos": repo_sync.check_and_sync,
+		"devicetree": device_tree.show,
 		"install": installer.install,
 		"intro": intro.show,
 		"edit": edit_config.edit,
