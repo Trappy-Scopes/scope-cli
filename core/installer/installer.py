@@ -1,139 +1,33 @@
-
-### Minimal imports. Remeber nothing exists yet. Only libraries in the standard
-### Distribution
-import os
+import subprocess
 import sys
-#from .fammods import Fammods
+
+from core.installer import environment
+
 
 class Installer:
-	pylibs = ["rich", "pyyaml", "colorama", "nanoid", "art",
-			  "plotext", "asciichartpy", "prompt_toolkit", 
-			  "GitPython", "schedule", "paho-mqtt", "websockets", 
-			  "pandas", "textual", "pyserial", "sounddevice", "requests", 
-			  "beautifulsoup4", "rpyc", "pypandoc", "reportlab"]
-	
-	binlibs = ["fim", # Frame Image Manager (Improved frame image buffer), for viewing images on the command line.
-			  ]
-	gitclones = ["https://github.com/Trappy-Scopes/network.git", 
-				"https://github.com/Trappy-Scopes/secrets.git"]
-	
-	def fresh():
-		"""
-		Make a fresh install including initalising the fammod structure.
-		"""
-		Installer.install_py_libs(["pyyaml"])  ## Becaue fammods requires yaml
-		Fammods.new("ts", "/home/trappyscope/")
+	"""
+	The one real entry point is do_all(). No dependency is declared here --
+	binary or Python -- by design (see docs/notes/restructuring.md): this
+	module only orchestrates, everything it installs comes from
+	pyproject.toml, bootstrap-requirements.txt, or hardware-profiles/*/.
 
-		## Add each one of them
-		for git in Installer.gitclones:
-			Fammods.add("ts", git)
-
+	Previously declared its own pylibs/binlibs lists (a second, drifting
+	copy of what pyproject.toml already declared) and ran `pip install .`
+	(non-editable) here -- the exact bug that silently replaced a working
+	editable dev install and broke `trappyscope` itself. Both removed.
+	"""
 
 	def do_all():
 		"""
-		Install all
+		Reinstall trappyscopes as an editable package, then hand off to
+		core.installer.environment for everything else (uv, PEP 668/venv,
+		hardware-profile discovery and sync).
 		"""
-		platform = sys.platform.startswith('linux')*"linux" + \
-		           sys.platform.startswith('darwin')*"darwin"
-		if not platform:
-			print("We don't do Windows! For now!! Sorry!")
-			exit()
+		print("Installing trappyscopes (editable)...")
+		result = subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."],
+								 check=False)
+		if result.returncode != 0:
+			print("pip install -e . failed -- stopping before touching hardware profiles.")
+			return
 
-		print("Building python packages. Please make sure that `pip` exists.\n\
-			  Otherwise use your own buildsystem and install the binaries by yourself!")
-		os.system("pip install .")
-
-		print("Installing binaries.")
-
-
-		Installer.install_bin_libs(Installer.binlibs)
-
-	def do_all__():
-		"""
-		Update all.
-		"""
-		platform = sys.platform.startswith('linux')*"linux" + \
-		           sys.platform.startswith('darwin')*"darwin"
-		if not platform:
-			print("We don't do Windows! For now!! Sorry!")
-			exit()
-
-		print(f"Plateform is: {platform}.")
-		if platform == "darwin":
-			print("Please ensure that `brew` package manager is installed.")
-
-
-		print(f"You are ready to trap cells, you just need the following: \
-			  \npython libraries: {Installer.pylibs} \
-			  \nother libraries: {Installer.binlibs}")
-		x = input("Let's go, we will need sudo previledges [press Enter]:")
-
-
-		## python
-		Installer.install_py_libs(Installer.pylibs)
-
-
-
-		### ----
-		print("\n\nIf everyhting went well, we are ready to go!\n\n")
-
-		
-
-	def install_py_libs(required_libs):
-
-		for i, lib in enumerate(required_libs):
-			try: 
-				__import__(lib)
-				print(f"{i}. {lib} : already exists!")
-			except ImportError:
-				#pip.main(['install', lib, "--break-system-packages"])
-				#os.system(f"sudo pip install {lib} --break-system-packages")
-				os.system(f"sudo pip install {lib}")
-				print(f"{i}. {lib} : was installed!")
-
-
-	def install_rpi_config_files():
-
-		## Copy the system config file
-		#with open("_core/installer/rpi_config_files/boot/config.txt", "r") as fnew:
-		#	with open("/boot/config.txt", "w") as fold:
-		#		fold.write(fnew.read())
-		#os.system("cat _core/installer/rpi_config_files/boot/config.txt")
-		print("Please run: sudo cp _core/installer/rpi_config_files/boot/config.txt /boot/config.py")
-
-		## sudo is being ignored.
-		os.system("sudo cp _core/installer/rpi_config_files/boot/config.txt /boot/config.py")
-
-
-	def install_bin_libs(required_libs):
-		"""Install system librairs using external pakage managers
-		   Linux: Uses `sudo apt-get -y`
-		   Darwin: 
-		"""
-		print(f"Installing binary libraries (sudo previledges will be required): {required_libs}")
-		for lib in required_libs:
-			os.system(f"sudo apt-get -y {lib}")
-
-	def gitclone(dir_="../"):
-
-		from git import Repo
-
-		dir_ = os.path.abspath(dir_)
-		required_libs = list(required_libs)
-		
-		for lib in required_libs:
-			print(f"Git clone: Checking :  {lib}")
-			lib_name = lib.split("/")[-1].rstrip(".git")  
-			installer = lambda:	os.system(f"git clone {lib} -C {dir_}")
-			if not os.path.isdir(os.path.join(dir_, lib_name)):
-				installer()
-			else:
-				try:
-					repo = Repo(os.path.join(dir_, lib_name))
-				except:
-					installer()
-
-			
-
-	def check_submodules():
-		pass
+		environment.ensure()
