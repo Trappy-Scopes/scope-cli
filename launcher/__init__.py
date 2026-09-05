@@ -1,30 +1,26 @@
 """
-The trappyscope launcher: two entry points into the same experiment
-environment.
+The trappyscope launcher: two entry points into the same pre-flight
+sequence.
 
-	trappyscope             fast track -- no menu, no animation, straight
-	                        through to a booted console (see fast_track()).
+	trappyscope             fast track -- runs "launch normally" directly,
+	                        no menu, no animation (see fast_track()).
 	trappyscope --launcher  the animated menu (see launcher.tui.run_launcher).
 
-Neither path yet performs the full boot sequence from
-docs/notes/restructuring.md §7.3 (environment activation, config validation,
-config-server sync, git-sync) -- those steps aren't built yet. Both currently
-do exactly what `python -i main.py` does today: build the experiment
-environment and hand it to an interactive console. `run_launcher` additionally
-offers a few actions (open a specific experiment, queue a script, install,
-show the intro, edit the config) that already existed as core/argparser.py
-flags, as selectable menu items instead.
+The launcher sits above the scope CLI, not inside it: it checks and syncs
+configuration and repository status, then hands off control. It never opens
+an experiment or runs a script itself -- see launcher/utilities/boot.py,
+the one place that responsibility passes to expenv.build() (what
+`python -i main.py` already does today).
 """
+
 
 def fast_track():
 	"""
-	The bare `trappyscope` path: build the experiment environment and drop
-	into an interactive console with it. No menu, no animation. Identical to
-	the menu's "Boot normally" action -- this *is* that action, just reached
-	without the menu.
+	The bare `trappyscope` path -- exactly the menu's "Launch normally" item,
+	reached without the menu.
 	"""
-	from . import actions
-	actions.boot()
+	from .utilities import launch_normally
+	launch_normally.run()
 
 
 def run_launcher():

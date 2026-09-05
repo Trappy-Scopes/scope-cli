@@ -1,50 +1,48 @@
 """
 The interactive launcher: `trappyscope --launcher`.
 
-A prompt_toolkit full-screen app. The chlamy_dance animation loops
-continuously in the top pane while a selectable menu sits below it, and
-neither is written from scratch: chlamy_dance.render() already emits raw
-24-bit ANSI escapes, and prompt_toolkit's `ANSI()` helper parses that
-directly, so embedding the animation needed no changes to it at all.
+A small block in the middle of the screen -- the animation, a title line,
+then the menu -- not a full-screen app. Built on `rich.live.Live` with
+`screen=False` rather than prompt_toolkit's full-screen `Application`: Live
+just repaints in place and has no minimum-terminal-size gate, which is what
+made the previous, prompt_toolkit-based version unusable ("window too
+small") on an ordinary terminal window. Keystrokes are read in POSIX
+non-canonical ("cbreak") mode via stdlib `tty`/`termios` -- one key at a
+time, no waiting for Enter, no terminal echo -- polled with `select()` on a
+short timeout so the animation keeps looping between keystrokes rather than
+blocking on input. The animation loops for as long as the menu is open --
+until a selection is made or the user quits.
 
-The menu is a small hand-rolled control rather than prompt_toolkit's
-RadioList widget, on purpose: RadioList binds Enter/Space internally to mean
-"select this item", and composing that cleanly with an app-level "confirm
-and exit" binding on the same key is exactly the kind of thing that's easy
-to get subtly wrong. A menu this size (six items, up/down/enter/quit) is
-less code to hand-roll than to verify against a widget's internal bindings.
+chlamy_dance.render() already emits raw 24-bit ANSI escapes, which
+rich.text.Text.from_ansi() parses directly (verified), so embedding the
+animation needed no changes to it at all.
 """
 
+import select
+import sys
+import termios
 import time
+import tty
 
-from prompt_toolkit.application import Application
-from prompt_toolkit.formatted_text import ANSI
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.widgets import Frame
+from rich.align import Align
+from rich.console import Console, Group
+from rich.live import Live
+from rich.text import Text
 
 from . import chlamy_dance as dance
 
 FPS = 20
+ESCAPE_TIMEOUT = 0.02  # seconds to wait for the rest of an arrow-key sequence
 
 MENU_ITEMS = [
-	("boot", "Boot normally"),
-	("open_experiment", "Open an existing experiment"),
-	("run_script", "Run a script"),
+	("launch", "Launch normally"),
+	("check", "Check configuration file"),
+	("sync", "Sync configuration file"),
+	("repos", "Repository utility"),
 	("install", "Install / setup"),
 	("intro", "Show the introduction"),
-	("edit_config", "Edit the configuration file"),
+	("edit", "Edit the configuration file"),
 ]
-
-ACTIONS = {
-	"boot": "boot",
-	"open_experiment": "open_experiment",
-	"run_script": "run_script",
-	"install": "install",
-	"intro": "intro",
-	"edit_config": "edit_config",
-}
 
 
 class Menu:
@@ -64,47 +62,44 @@ class Menu:
 	def down(self):
 		self.index = (self.index + 1) % len(self.items)
 
-	def text(self):
-		fragments = []
-		for i, (_, label) in enumerate(self.items):
-			style = "reverse" if i == self.index else ""
-			prefix = "> " if i == self.index else "  "
-			fragments.append((style, f"{prefix}{label}\n"))
-		return fragments
+
+def _decode_key(first, read_byte):
+	"""
+	Turn a single already-read byte (plus, for escape sequences, a callback
+	to read the following bytes) into one of 'up', 'down', 'enter', 'quit',
+	or None (unrecognised). Pure logic, no terminal I/O -- `read_byte` is
+	injected so this can be tested without a real tty.
+	"""
+	if first in ("\r", "\n"):
+		return "enter"
+	if first in ("q", "Q"):
+		return "quit"
+	if first == "\x1b":
+		second = read_byte()
+		if second != "[":
+			return "quit"  # a bare Escape, not the start of a sequence
+		third = read_byte()
+		if third == "A":
+			return "up"
+		if third == "B":
+			return "down"
+		return None
+	return None
 
 
-def _build_app(menu, animation_text, input=None, output=None):
-	kb = KeyBindings()
+def _render(menu, elapsed):
+	t = elapsed % dance.DURATION
+	animation = Text.from_ansi(dance.render(dance.frame(t)), no_wrap=True)
 
-	@kb.add("up")
-	def _(event):
-		menu.up()
+	title = Text("Trappy-Scopes launcher", style="bold", justify="center")
 
-	@kb.add("down")
-	def _(event):
-		menu.down()
+	menu_lines = Text()
+	for i, (_, label) in enumerate(menu.items):
+		prefix = "> " if i == menu.index else "  "
+		style = "reverse" if i == menu.index else ""
+		menu_lines.append(f"{prefix}{label}\n", style=style)
 
-	@kb.add("enter")
-	def _(event):
-		event.app.exit(result=menu.selected_key)
-
-	@kb.add("c-c")
-	@kb.add("q")
-	def _(event):
-		event.app.exit(result=None)
-
-	animation = Window(content=FormattedTextControl(animation_text), height=dance.H)
-	menu_window = Window(content=FormattedTextControl(menu.text))
-	root = HSplit([Frame(animation, title="Trappy-Scopes"), Frame(menu_window)])
-
-	return Application(
-		layout=Layout(root),
-		key_bindings=kb,
-		full_screen=True,
-		refresh_interval=1 / FPS,
-		input=input,
-		output=output,
-	)
+	return Align.center(Group(animation, Text(), title, Text(), menu_lines))
 
 
 def run_launcher():
@@ -112,17 +107,52 @@ def run_launcher():
 	Show the animated menu and run whichever action was chosen (or nothing,
 	if cancelled). Each action is responsible for its own exit/handoff.
 	"""
+	menu = Menu(MENU_ITEMS)
+	console = Console(width=dance.W)
+	choice = None
 	start = time.monotonic()
 
-	def animation_text():
-		t = (time.monotonic() - start) % dance.DURATION
-		return ANSI(dance.render(dance.frame(t)))
+	fd = sys.stdin.fileno()
+	old_settings = termios.tcgetattr(fd)
+	try:
+		tty.setcbreak(fd)
+		with Live(_render(menu, 0), console=console, screen=False,
+				  auto_refresh=False, transient=True) as live:
+			while True:
+				live.update(_render(menu, time.monotonic() - start), refresh=True)
 
-	menu = Menu(MENU_ITEMS)
-	app = _build_app(menu, animation_text)
-	choice = app.run()
+				ready, _, _ = select.select([sys.stdin], [], [], 1 / FPS)
+				if not ready:
+					continue
+
+				def read_byte(_timeout=ESCAPE_TIMEOUT):
+					r, _, _ = select.select([sys.stdin], [], [], _timeout)
+					return sys.stdin.read(1) if r else ""
+
+				key = _decode_key(sys.stdin.read(1), read_byte)
+				if key == "up":
+					menu.up()
+				elif key == "down":
+					menu.down()
+				elif key == "enter":
+					choice = menu.selected_key
+					break
+				elif key == "quit":
+					break
+	finally:
+		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 	if choice is None:
 		return
-	from . import actions
-	getattr(actions, ACTIONS[choice])()
+
+	from .utilities import (check_config, edit_config, installer, intro,
+							 launch_normally, repo_sync, sync_config)
+	{
+		"launch": launch_normally.run,
+		"check": check_config.check,
+		"sync": sync_config.sync_trappyverse,
+		"repos": repo_sync.check_and_sync,
+		"install": installer.install,
+		"intro": intro.show,
+		"edit": edit_config.edit,
+	}[choice]()
