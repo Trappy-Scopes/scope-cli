@@ -60,6 +60,11 @@ parser.add_argument('--intro', dest='intro', default=False, action='store_true',
                     help='Print the scope CLI introduction document.')
 ### ------------------------------------
 
+### --- launcher menu ------------------
+parser.add_argument('--launcher', dest='launcher', default=False, action='store_true',
+                    help='Open the animated menu instead of booting straight through.')
+### ------------------------------------
+
 
 ### --- MP4 converter ------------------
 parser.add_argument('-mp4', '--mp4', metavar=('<exp-name>'), dest='tomp4_exp', 
@@ -139,6 +144,7 @@ Share.argparse["user"] = args.user[0]
 Share.argparse["expname"] = args.expname
 Share.argparse["noep"] = (args.noep or (len(scriptlist) > 0))
 Share.argparse["nofluff"] = args.nofluff
+Share.argparse["launcher"] = args.launcher
 
 if args.intro:
     from utilities.fluff import intro
