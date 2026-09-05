@@ -512,6 +512,23 @@ those changes.
     two disagree, the template wins; where the template and the code disagree,
     the code and the live configs win until deliberately migrated.
 
+!!! success "Correction — 2026-09-05, later the same day"
+    The above was backwards. `default_config.yaml` **is** the file that gets
+    copied to a new scope as its `trappyconfig.yaml` — it is the template on
+    purpose, and it not booting is a known, accepted state, not a bug to
+    reflexively fix by reverting it to match the old convention. The
+    `ScopeAssembly:` / `Experiment.exp_dir` / `Experiment.file_server` shape it
+    describes **is the intended direction**: the newer, more structured format
+    from the README, and it is what gets implemented. The live config and the
+    code are the legacy convention, not the ground truth to preserve.
+
+    So the fix direction reverses: **bring `ScopeAssembly.open()` and
+    `Experiment` up to what the template already describes**, not the other
+    way around. §11 tabulates every field across all four sources found
+    (live config, template, README, and a fourth reference copy this session
+    turned up); §12 tabulates exactly where the code breaks and what changes,
+    for review before anything is executed.
+
 Two more drifts of the same kind, both currently harmless by accident:
 
 - `assembly.py:64` reads `scopeconfig["abstractions"]` (plural); live configs
@@ -556,24 +573,32 @@ it has to happen *before* the code launches, before the scope is constructed,
 before the experiment environment is built. That is a layer that does not
 exist yet. The `./trappyscope` script was the beginning of it.
 
-What the launcher should do, in order, before handing off to `main.py`:
+**Order, revised 2026-09-05 — reasoned through, not the order first proposed:**
 
+0. **Activate the declared environment, first.** The `venv` block already
+   exists in the template. This has to happen before anything else because
+   the *later* steps are themselves Python — the config validator included —
+   so the correct interpreter has to be running before step 1 can even import
+   its own dependencies. Must be package-manager agnostic — conda here,
+   possibly plain `venv` elsewhere — so it needs a crude, general method of
+   finding the right Python rather than a clean one.
 1. **Validate the configuration and produce a readable traceback.** Raw
    `PyYAML` errors do not say *where* the mistake is, which makes a broken
    config painful to diagnose on a headless scope. Worth pulling in a schema
    validation library rather than hand-rolling.
-2. **Sync the configuration with the config server.** Read the server address
-   from the local config, ask whether the stored configuration has changed,
-   and if so rewrite the local file and reload. The point is a single place to
-   edit the configuration of every microscope at once: each scope picks up its
-   new configuration on next boot. (Whether to re-run the whole loop after a
-   reload, or apply once and continue, is open — probably apply once.)
-3. **Git-sync the declared repositories**, including this codebase, so every
-   scope updates itself on launch.
-4. **Activate the declared environment.** The `venv` block already exists in
-   the template. This must be package-manager agnostic — conda here, but
-   possibly `venv` or something else on another machine — so it needs a crude,
-   general method of finding the right Python rather than a clean one.
+2. **Sync the configuration with the config server**, before git-sync — not
+   after. Reasoning: the *remote* configuration is the one that says whether
+   git-sync should even run. If step 3 ran first, a scope could git-sync on
+   stale instructions from a config the server has since changed (e.g.
+   git-sync was deliberately disabled remotely). Read the server address from
+   the local config, ask whether the stored configuration has changed, and if
+   so rewrite the local file. **Open risk, not yet resolved:** if this step
+   rewrites the config, the newly-fetched file has not itself been validated —
+   a corrupt push to the config server would brick every scope that syncs it
+   on next boot unless the freshly-written file is re-run through step 1
+   before continuing.
+3. **Git-sync the declared repositories**, including this codebase, now
+   acting on whatever step 2 left in place.
 
 ---
 
@@ -661,3 +686,68 @@ until the files are moved.
 
 Separately, the utility is meant to be callable from anywhere, which is why
 the lookup is absolute rather than relative to the working directory.
+
+---
+
+## 11. Four-way configuration tabulation
+
+For review, not yet acted on. Four sources exist, not three — a fourth
+turned up while tracing every reader: `core/permaconfig/exempler.py`, an
+unimported reference config that matches the **live** convention exactly
+(`devices:`, `config.expdir`, `config.file_server`, `config.git_dependencies`,
+`abstraction:` singular). It's included because it's independent evidence
+that the live convention isn't a one-off drift on this particular machine —
+whoever wrote `exempler.py` was working from the same convention the code
+and all eight scopes use.
+
+There is also a fifth, older convention, found and dismissed: `core/sync.py`
+(`SyncEngine`) reads `deviceid["git_sync"]` and `deviceid["file_server"]` as
+flat top-level keys with no `config:` nesting at all, and imports a
+`config.common` module that does not exist anywhere in this repository. It
+is unimported by anything live and cannot run. Included here only as
+evidence of a still-earlier layout, not as a candidate.
+
+**Target column reflects the 2026-09-05 correction in §2.1: the template
+(and README) direction is what gets built.**
+
+| Field | Live config + code | `exempler.py` | Template (target) | README | Verdict |
+|---|---|---|---|---|---|
+| Device block | `devices:` | `devices:` | `ScopeAssembly:` | `ScopeAssembly:` | **Rename**, see §12 |
+| Host's own processor group | not declared; auto-created as `"node"` in `ScopeAssembly.__init__` | same | template shows a `<hostname>` entry *inside* `ScopeAssembly:` | same, §"Define devices" | **Open design question**, see §12 |
+| Abstraction | `abstraction:` (singular), half-wired | `abstraction:` (singular) | absent | not in the documented schema | **Drop** — already decided, §9.2 |
+| Experiment directory | `config.expdir` | `config.expdir` | `Experiment.exp_dir` | `Experiment.exp_dir` | **Rename**, see §12 |
+| Experiment data sync | `config.file_server` | `config.file_server` | `Experiment.file_server` | `Experiment.file_server` | **Rename + move**, see §12 |
+| Config-file sync | absent entirely | absent | `config.config_server` | `config.config_server` | **New feature to build** (§7.3 step 2), not a rename |
+| Git sync | `config.git_sync` (bare bool) + `config.git_dependencies` (`{url: local_path}`) | same | `config.git_sync: {active, command, repos: []}` (`repos` is a list of local dirs, no URLs) | same | **Reshape, not rename** — different data shape, see §12 |
+| `active:` enforcement | ad hoc (`ExpSync` only); `git_sync` truthy-dict bug | n/a | assumed everywhere | documented as universal | **Depends on §7.1 landing first** |
+| `metaclass` / `read_method` / `write_method` | absent | absent | absent from the template's own example | documented in prose only | **Out of scope here** — tracked in §8, deferred |
+| `protocols_dir`, `calibration_dir`, `exp_dir_structure`, `exp_report`, `eid_generator` | absent, unread | absent | present | present | **Not a rename** — these need new code to do anything, see §12 |
+| `Experiment.scripts_dirs` | present, read by `scriptengine.py:95` | absent | absent | absent | **Template gap** — add the key, no code change |
+| `startup_recipie` | absent (falls back to `freestyle`) | absent | present, correct | describes the concept | **Already done** (Phase 3) |
+| `lit` (proxy device) | top-level, outside `devices:`; `kind: proxy` isn't an importable path | same placement, same `kind: proxy` | not present as an example | proxy devices not covered by the documented schema | **Blocked on §9's tree/proxy design** — not a simple migration |
+| `autostart_cli_after_reboot` | present, read nowhere | present | absent | absent | Dead field either way — no action |
+| `type:` (e.g. `microscope`) | present, read nowhere | present | present (`generic-scope` placeholder) | documented as "selection of the abstraction" but never wired to select anything | Aspirational, unimplemented; not blocking |
+
+---
+
+## 12. Breakage table — adopting the template's format
+
+**For review. Nothing below has been executed.** Each row is one place the
+code assumes the live convention and would need to change to read the
+template's convention instead.
+
+| # | Change | File : line(s) | What has to change |
+|---|---|---|---|
+| 1 | `devices:` → `ScopeAssembly:` | [hive/assembly.py:113](hive/assembly.py:113) | `for device, device_params in scopeconfig["devices"].items():` → read `scopeconfig["ScopeAssembly"]` instead. |
+| 2 | Host device collision | [hive/assembly.py](hive/assembly.py) `__init__` (auto-adds `"node"`) vs. `open()` (would mount the config's own `<hostname>` entry) | **Not a mechanical fix — a design decision.** If the `ScopeAssembly:` block declares a host entry (as the template shows), does it *replace* the auto-created `"node"`, or do both exist under different names? Needs an answer before #1 is safe to make. |
+| 3 | `config.expdir` → `Experiment.exp_dir` | [expframework/experiment.py:163](expframework/experiment.py:163), [:197](expframework/experiment.py:197), [:294](expframework/experiment.py:294) | Three call sites, all `TrappyConfig.current["config"]["expdir"]` → `TrappyConfig.current["Experiment"]["exp_dir"]`. |
+| 4 | `config.file_server` → `Experiment.file_server` | [expframework/expsync.py:29-35](expframework/expsync.py:29) | Six keys (`active`, `server`, `share`, `username`, `password`, `destination`) all read off `scopeconfig["config"]["file_server"]`; move to `scopeconfig["Experiment"]["file_server"]`. **Caution:** do not conflate with the new `config.config_server` block (#6) — same-shaped sub-keys, different purpose (experiment data vs. the config file itself). |
+| 5 | `git_sync` reshape | [startup.py:12](startup.py:12), [:16](startup.py:16) | Not a rename: today `git_sync` is a bare bool gating a *separate* `git_dependencies` map (`{repo_url: local_path}`); the template's `git_sync: {active, command, repos: []}` is one block where `repos` is a list of local directories with no URL. Rewriting this also fixes the `if scopeconfig["config"]["git_sync"]:` truthy-dict bug (§7.1) — worth landing together since the same code changes either way. Decide first: does the new shape need to *clone* missing repos (needs the URL), or only `pull` ones assumed already checked out (the template's model)? |
+| 6 | Config-file sync | new code, no existing site | Nothing reads `config.config_server` today — this is new, feeding launcher step 2 (§7.3). Needs: reachability check, "has it changed" comparison, rewrite-local-file, and the re-validation caveat already flagged in §7.3. |
+| 7 | `active:` filtering | [core/permaconfig/config.py](core/permaconfig/config.py) (`TrappyConfig`) | New mechanism, not a rename: implement once per §7.1, so `venv`, the reshaped `git_sync` (#5), `file_server` (#4), and `config_server` (#6) all get it for free instead of each needing its own check. **Sequencing matters: doing #5 before this exists just recreates the current bug in the new shape.** |
+| 8 | `lit` / proxy devices | [hive/assembly.py:113](hive/assembly.py:113) (`open()`'s device loop) | `kind: proxy` is not a dotted import path — `"proxy".rsplit(".", 1)` returns a single-element list, so indexing `[1]` raises `IndexError` the moment this device is actually processed. Currently silent only because `lit` sits outside `devices:` and is never iterated. Not fixable by the rename in #1 alone; it needs the proxy/tree design from §9 to mean anything. Until then: either drop `lit` from live configs, or give it a real `kind:` as a stopgap so #1 doesn't immediately break it. |
+| 9 | `abstraction:` removal | [hive/assembly.py:64](hive/assembly.py:64) `__abstraction__()`, and `open()`'s ignored `abstraction=` parameter | Already decided (§9.2): delete, don't migrate. Listed here only so it isn't mistaken for one of the renames above when this table is executed against. |
+| 10 | `Experiment.scripts_dirs` | none — [expframework/scriptengine.py:95](expframework/scriptengine.py:95) already reads this correctly | Template-only gap: add the key to `default_config.yaml`. No code change. |
+| 11 | `protocols_dir`, `calibration_dir`, `exp_dir_structure`, `exp_report`, `eid_generator` | none currently | These exist in the template today but nothing reads them — adopting the format doesn't make them do anything. Each is a **separate feature to design and build**, not covered by this migration. Listed so they aren't assumed done once #3 lands. |
+
+**Suggested execution order, once reviewed:** #2 (design answer) → #7 (`active:` mechanism) → #1 (devices rename, now that #2 is answered) → #3, #4 (the two pure renames) → #5 (git_sync reshape, now that #7 exists) → #8 (`lit` stopgap or defer to §9) → #9 (delete abstraction) → #6 (new config-server feature, launcher work) → #10 (template gap). #11 stays a backlog, not part of this migration.
