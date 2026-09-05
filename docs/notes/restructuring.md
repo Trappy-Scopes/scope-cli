@@ -599,6 +599,24 @@ it has to happen *before* the code launches, before the scope is constructed,
 before the experiment environment is built. That is a layer that does not
 exist yet. The `./trappyscope` script was the beginning of it.
 
+**2026-09-05: the entry-point skeleton for this now exists**, ahead of the
+step sequence below. `pyproject.toml`'s `[project.scripts]` entry
+(`trappyscope = "trappyscopes.main:main"`) was broken — the target module
+didn't exist — and is now real. Two paths, both currently doing what
+`python -i main.py` already does (build the experiment environment, hand it
+to a console) since none of steps 0-4 below are built yet:
+
+- `trappyscope` (bare) — fast track, no menu, no animation.
+- `trappyscope --launcher` — a full-screen animated menu (`launcher/`),
+  chlamy-dance loop on top, a hand-rolled selectable list below offering:
+  boot normally, open a specific experiment, queue a script, install, show
+  the intro, edit the config. Each wraps something that already existed as
+  a `core/argparser.py` flag.
+
+Steps 0-4 below are the next layer to build *underneath* this entry point —
+`fast_track()`/the menu's "boot normally" action are exactly where they'll
+get inserted once written.
+
 **Order, revised 2026-09-05 — reasoned through, not the order first proposed:**
 
 0. **Activate the declared environment, first.** The `venv` block already
