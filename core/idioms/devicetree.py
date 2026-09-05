@@ -49,30 +49,60 @@ def _run_json(args):
 
 # ------------------------------------------------------------- serial ---
 
-def _probe_micropython(port):
+def _is_micropython_candidate(port):
+    """`port` is a serial.tools.list_ports ListPortInfo. "Board in FS mode"
+    is the same heuristic hive/processorgroups/micropython.py already
+    uses to spot a MicroPython device among ordinary serial ports."""
+    return bool(port.description) and "board in fs mode" in port.description.lower()
+
+
+def micropython_candidates():
+    """
+    ListPortInfo objects for every serial port that looks like a
+    MicroPython device -- no port opened, this is USB enumeration data
+    the OS already has. `.serial_number` here is the device's UID (for
+    RP2040 boards, verified this session to equal machine.unique_id()
+    read over the REPL exactly) -- free to read, unlike everything else
+    probe_micropython() below has to open a connection for.
+    """
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return []
+    return [p for p in list_ports.comports() if _is_micropython_candidate(p)]
+
+
+def probe_micropython(device):
     """
     Connect to a MicroPython device over serial and read its version and,
-    if core/external/pyboard.py's raw-REPL connection -- the same
-    mechanism hive/processorgroups/micropython.py already uses -- and
-    always disconnects afterward, success or failure. One exec_() call
-    does both reads at once (each on its own printed line) rather than
-    two round trips.
+    if it's running pico_firmware, its board identity -- via
+    core/external/pyboard.py's raw-REPL connection, the same mechanism
+    hive/processorgroups/micropython.py already uses -- and always
+    disconnects afterward, success or failure. One exec_() call does
+    both reads at once (each on its own printed line) rather than two
+    round trips.
 
-    Best-effort: any failure (not actually MicroPython, port already
-    open elsewhere, a real timeout) returns None rather than raising --
-    this runs automatically for every "Board in FS mode" port the
-    device tree finds, so one unresponsive port must not take the
-    whole tree down with it.
+    Returns {"mpy_version": ..., "circuit_id": ... or None} or None on
+    any failure (not actually MicroPython, port already open elsewhere,
+    a real timeout) -- callers must not let one unresponsive port take
+    anything else down with it.
+
+    This is the expensive path: it resets the board and briefly owns its
+    serial port. A *registered* device's cached info should be read from
+    core.idioms.deviceregistry instead of calling this again -- see
+    _serial() below and launcher/utilities/register_device.py, which
+    calls this deliberately (registering is the one case where a fresh
+    read is exactly the point).
     """
     try:
         from core.external import pyboard
     except ImportError:
         return None
 
-    device = None
+    board_ = None
     try:
-        device = pyboard.Pyboard(port, 115200)
-        device.enter_raw_repl()
+        board_ = pyboard.Pyboard(device, 115200)
+        board_.enter_raw_repl()
         probe = (
             "import os\n"
             "print(os.uname().release)\n"
@@ -82,28 +112,31 @@ def _probe_micropython(port):
             "except ImportError:\n"
             "    print('none')\n"
         )
-        output = device.exec_(probe).decode().strip().splitlines()
+        output = board_.exec_(probe).decode().strip().splitlines()
     except Exception:
         return None
     finally:
-        if device is not None:
+        if board_ is not None:
             try:
-                device.exit_raw_repl()
+                board_.exit_raw_repl()
             except Exception:
                 pass
             try:
-                device.close()
+                board_.close()
             except Exception:
                 pass
 
     mpy_version = output[0].strip() if len(output) > 0 else None
     circuit_id = output[1].strip() if len(output) > 1 else "none"
-
     if not mpy_version:
         return None
-    detail = f"MicroPython {mpy_version}"
-    if circuit_id != "none":
-        detail += f" · pico_firmware: {circuit_id}"
+    return {"mpy_version": mpy_version, "circuit_id": None if circuit_id == "none" else circuit_id}
+
+
+def _format_mpy_detail(info):
+    detail = f"MicroPython {info['mpy_version']}"
+    if info.get("circuit_id"):
+        detail += f" · pico_firmware: {info['circuit_id']}"
     return detail
 
 
@@ -113,13 +146,28 @@ def _serial():
         from serial.tools import list_ports
     except ImportError:
         return []
+
+    from core.idioms import deviceregistry
+
     devices = []
     for p in list_ports.comports():
         detail = None if p.description in (None, "n/a") else p.description
-        if detail and "board in fs mode" in detail.lower():
-            probed = _probe_micropython(p.device)
-            if probed:
-                detail = f"{detail} · {probed}"
+        if _is_micropython_candidate(p):
+            registered = deviceregistry.get(p.serial_number) if p.serial_number else None
+            if registered:
+                ## Registered: the UID alone (already free -- no port
+                ## opened) is enough to answer "what is this," so skip
+                ## the invasive raw-REPL round trip entirely.
+                mpy_bit = f"MicroPython {registered.get('mpy_version', '?')}"
+                if registered.get("circuit_id"):
+                    mpy_bit += f" · pico_firmware: {registered['circuit_id']}"
+                if registered.get("role"):
+                    mpy_bit += f" · role: {registered['role']}"
+                detail = f"{detail} · {mpy_bit}"
+            else:
+                probed = probe_micropython(p.device)
+                if probed:
+                    detail = f"{detail} · {_format_mpy_detail(probed)} · unregistered"
         devices.append({"label": p.device, "detail": detail})
     return devices
 
