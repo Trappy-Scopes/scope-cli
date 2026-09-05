@@ -157,6 +157,18 @@ def build(config):
 		k: v for k, v in vars(useractions).items() if not k.startswith("_")
 	})
 
+	## Scripts must run as if they were the main program, so their
+	## `if __name__ == "__main__":` blocks fire. When startup was exec()-ed,
+	## ScriptEngine received main.py's globals, which carried these dunders;
+	## a freshly built dict does not. The failure is silent rather than loud:
+	## with `__name__` absent from globals the lookup falls through to
+	## builtins, where `__name__` is "builtins", so the guard is just quietly
+	## False. `__file__` is main.py's path, not the script's -- scripts like
+	## scripts/alignmenttools/framealignment.py build paths assuming that.
+	import __main__
+	namespace["__name__"] = "__main__"
+	namespace["__file__"] = getattr(__main__, "__file__", "main.py")
+
 	## Run startup scripts ---------------------------------------------------
 	## CLI scripts first (recorded by core.argparser), then the ones named in
 	## the configuration. Scripts run against the namespace we just built, so
