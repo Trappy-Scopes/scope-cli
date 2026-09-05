@@ -16,6 +16,11 @@ until a selection is made or the user quits.
 chlamy_dance.render() already emits raw 24-bit ANSI escapes, which
 rich.text.Text.from_ansi() parses directly (verified), so embedding the
 animation needed no changes to it at all.
+
+The menu itself keeps running: choosing a "micro-utility" (check/sync/repos/
+intro/edit) runs it, shows its output, then asks whether to return to the
+menu or leave -- see run_launcher(). "Launch normally" and "Exit" are the
+only terminal choices.
 """
 
 import os
@@ -137,10 +142,15 @@ def _render(menu, elapsed, version=None):
 	return Align.center(Group(animation, Text(), *header, Text(), menu_lines))
 
 
-def run_launcher():
+def _show_menu():
 	"""
-	Show the animated menu and run whichever action was chosen (or nothing,
-	if cancelled). Each action is responsible for its own exit/handoff.
+	Run the animated menu until a selection is made ('enter') or the user
+	quits ('q'/bare Escape). Returns the chosen key, or None if quit.
+
+	Recomputes the version line fresh on every call rather than once for
+	the whole launcher session: a micro-utility run in between (repository
+	sync in particular) can change this repo's HEAD, and a stale cached
+	commit would then be wrong the next time the menu shows.
 	"""
 	menu = Menu(MENU_ITEMS)
 	console = Console()
@@ -186,16 +196,44 @@ def run_launcher():
 	finally:
 		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-	if choice is None or choice == "exit":
-		return
+	return choice
 
+
+def run_launcher():
+	"""
+	Show the animated menu and run whichever action was chosen, looping
+	back to the menu afterward -- except for "Launch normally" and "Exit",
+	which are terminal: the former hands off to a real interactive scope
+	CLI session (there is no "back" from that), the latter is exactly a
+	request to stop.
+
+	For every other ("micro-utility") action, the utility runs to
+	completion showing its own output, then a plain yes/no prompt asks
+	whether to return to the menu or leave -- the launcher keeps running
+	until the user explicitly does one or the other.
+	"""
 	from .utilities import (check_config, edit_config, intro,
 							 launch_normally, repo_sync, sync_config)
-	{
-		"launch": launch_normally.run,
+
+	MICRO_UTILITIES = {
 		"check": check_config.check,
 		"sync": sync_config.sync_trappyverse,
 		"repos": repo_sync.check_and_sync,
 		"intro": intro.show,
 		"edit": edit_config.edit,
-	}[choice]()
+	}
+
+	while True:
+		choice = _show_menu()
+
+		if choice is None or choice == "exit":
+			return
+		if choice == "launch":
+			launch_normally.run()
+			return
+
+		MICRO_UTILITIES[choice]()
+
+		from rich.prompt import Confirm
+		if not Confirm.ask("\nReturn to the launcher menu?", default=True):
+			return
