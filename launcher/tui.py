@@ -18,6 +18,7 @@ rich.text.Text.from_ansi() parses directly (verified), so embedding the
 animation needed no changes to it at all.
 """
 
+import os
 import select
 import sys
 import termios
@@ -108,7 +109,7 @@ def run_launcher():
 	if cancelled). Each action is responsible for its own exit/handoff.
 	"""
 	menu = Menu(MENU_ITEMS)
-	console = Console(width=dance.W)
+	console = Console()
 	choice = None
 	start = time.monotonic()
 
@@ -121,15 +122,23 @@ def run_launcher():
 			while True:
 				live.update(_render(menu, time.monotonic() - start), refresh=True)
 
-				ready, _, _ = select.select([sys.stdin], [], [], 1 / FPS)
+				ready, _, _ = select.select([fd], [], [], 1 / FPS)
 				if not ready:
 					continue
 
+				## os.read, not sys.stdin.read: select() reports readiness on
+				## the raw fd, and a buffered TextIOWrapper read can silently
+				## read ahead past what was asked for -- the next select()
+				## check on the same fd then finds nothing waiting even
+				## though the rest of an escape sequence already arrived, just
+				## stuck in Python's buffer instead of the kernel's. os.read
+				## never buffers ahead, so select() and it agree about what's
+				## actually available.
 				def read_byte(_timeout=ESCAPE_TIMEOUT):
-					r, _, _ = select.select([sys.stdin], [], [], _timeout)
-					return sys.stdin.read(1) if r else ""
+					r, _, _ = select.select([fd], [], [], _timeout)
+					return os.read(fd, 1).decode() if r else ""
 
-				key = _decode_key(sys.stdin.read(1), read_byte)
+				key = _decode_key(os.read(fd, 1).decode(), read_byte)
 				if key == "up":
 					menu.up()
 				elif key == "down":
