@@ -27,7 +27,6 @@
 ## -------------------------------------------------------------------------------------##
 
 name: <TrappySomething>            ## Name of the scope (scopeid)
-type: generic-scope                ## Type of device -> Selection of the abstraction
 
 
 ## Trappy-Scopes configuration options
@@ -35,6 +34,7 @@ config:
   trappydir: ~/trappyverse   # Directory where the configuration of the scope is stored.
   config_files: []           # Append more configuration files
   ui_mode: interactive       # User interaction mode
+  autostart_cli_after_reboot: false  # Reserved for a future feature. Not yet read by any code.
   venv:                      # Whether to use a virtual environment for 
       active: false          # Config block is active. The function is turned on.
       command: source ~/opt/miniconda3/bin/activate 
@@ -65,6 +65,11 @@ config:
 
 ## Experiment configuration options
 Experiment:
+  scripts_dirs:                       # Directories ScriptEngine.find() offers when picking a script
+    - ~/trappyscopes/scripts/         # interactively. This one is already read by the code as-is
+    - ~/trappyscopes/tests/           # (expframework/scriptengine.py); the rest of this block below
+                                       # describes the target format and is not read yet -- see
+                                       # docs/notes/restructuring.md §12.
   exp_dir: ~/experiments              # Default directory where experiments are stored
   protocols_dir: ~/lab_protocols      # Directory where protocols are stored, This can also be a git-address.
   calibration_dir: ~/calibration_dir  # Directory where calibrations are stored.

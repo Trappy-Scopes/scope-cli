@@ -726,11 +726,17 @@ template, and the README.
 | `active:` enforcement | ad hoc (`ExpSync` only); `git_sync` truthy-dict bug | assumed everywhere | documented as universal | **Depends on §7.1 landing first** |
 | `metaclass` / `read_method` / `write_method` | absent | absent from the template's own example | documented in prose only | **Out of scope here** — tracked in §8, deferred |
 | `protocols_dir`, `calibration_dir`, `exp_dir_structure`, `exp_report`, `eid_generator` | absent, unread | present | present | **Not a rename** — these need new code to do anything, see §12 |
-| `Experiment.scripts_dirs` | present, read by `scriptengine.py:95` | absent | absent | **Template gap** — add the key, no code change |
+| `Experiment.scripts_dirs` | present, read by `scriptengine.py:95` | ✅ added | absent from README's example | **Decided: should exist.** Template gap closed 2026-09-05; no code change needed, code already reads it. |
 | `startup_recipie` | absent (falls back to `freestyle`) | present, correct | describes the concept | **Already done** (Phase 3) |
-| `lit` (proxy device) | top-level, outside `devices:`; `kind: proxy` isn't an importable path | not present as an example | proxy devices not covered by the documented schema | **Blocked on §9's tree/proxy design** — not a simple migration |
-| `autostart_cli_after_reboot` | present, read nowhere | absent | absent | Dead field either way — no action |
-| `type:` (e.g. `microscope`) | present, read nowhere | present (`generic-scope` placeholder) | documented as "selection of the abstraction" but never wired to select anything | Aspirational, unimplemented; not blocking |
+| `lit` (proxy device) | top-level, outside `devices:`; `kind: proxy` isn't an importable path | not present as an example | proxy devices not covered by the documented schema | **Decided: illustrative example only, ignore.** Not a real deployment target — dropped from the breakage table, no longer blocked on anything. |
+| `autostart_cli_after_reboot` | present, read nowhere | ✅ added, commented "reserved for a future feature" | absent | **Decided: keep, will be implemented later.** Template gap closed 2026-09-05. |
+| `type:` (e.g. `microscope`) | present, read nowhere | ✅ removed | documented as "selection of the abstraction" but never wired to select anything | **Decided: remove.** Closed 2026-09-05 — deleted from the template; not renamed to README's top-level `kind:` synonym, which would only recreate the same dead field under a name that collides with the per-device `kind:` (dotted constructor path) meaning. |
+
+Four of these were resolved 2026-09-05 and are applied in
+`core/permaconfig/default_config.yaml` as of this commit: `type:` removed,
+`autostart_cli_after_reboot` and `Experiment.scripts_dirs` added, `lit`
+dropped from consideration. **Otherwise the README is authoritative** for
+anything not explicitly listed above.
 
 ---
 
@@ -749,9 +755,101 @@ template's convention instead.
 | 5 | `git_sync` reshape | [startup.py:12](startup.py:12), [:16](startup.py:16) | Not a rename: today `git_sync` is a bare bool gating a *separate* `git_dependencies` map (`{repo_url: local_path}`); the template's `git_sync: {active, command, repos: []}` is one block where `repos` is a list of local directories with no URL. Rewriting this also fixes the `if scopeconfig["config"]["git_sync"]:` truthy-dict bug (§7.1) — worth landing together since the same code changes either way. Decide first: does the new shape need to *clone* missing repos (needs the URL), or only `pull` ones assumed already checked out (the template's model)? |
 | 6 | Config-file sync | new code, no existing site | Nothing reads `config.config_server` today — this is new, feeding launcher step 2 (§7.3). Needs: reachability check, "has it changed" comparison, rewrite-local-file, and the re-validation caveat already flagged in §7.3. |
 | 7 | `active:` filtering | [core/permaconfig/config.py](core/permaconfig/config.py) (`TrappyConfig`) | New mechanism, not a rename: implement once per §7.1, so `venv`, the reshaped `git_sync` (#5), `file_server` (#4), and `config_server` (#6) all get it for free instead of each needing its own check. **Sequencing matters: doing #5 before this exists just recreates the current bug in the new shape.** |
-| 8 | `lit` / proxy devices | [hive/assembly.py:113](hive/assembly.py:113) (`open()`'s device loop) | `kind: proxy` is not a dotted import path — `"proxy".rsplit(".", 1)` returns a single-element list, so indexing `[1]` raises `IndexError` the moment this device is actually processed. Currently silent only because `lit` sits outside `devices:` and is never iterated. Not fixable by the rename in #1 alone; it needs the proxy/tree design from §9 to mean anything. Until then: either drop `lit` from live configs, or give it a real `kind:` as a stopgap so #1 doesn't immediately break it. |
+| 8 | ~~`lit` / proxy devices~~ | — | **Closed, not a breakage.** Decided 2026-09-05: `lit` is illustrative example content only, not a real deployment target — ignore. `kind: proxy` is in fact not a dotted import path (`"proxy".rsplit(".", 1)` returns one element, so indexing `[1]` would raise `IndexError` if this were ever actually processed), but since `lit` sits outside `devices:`/`ScopeAssembly:` and is never iterated, this stays silent regardless. No longer blocks the rename in #1; still tracked as a real feature under §9 whenever proxy devices are actually built. |
 | 9 | `abstraction:` removal | [hive/assembly.py:64](hive/assembly.py:64) `__abstraction__()`, and `open()`'s ignored `abstraction=` parameter | Already decided (§9.2): delete, don't migrate. Listed here only so it isn't mistaken for one of the renames above when this table is executed against. |
 | 10 | `Experiment.scripts_dirs` | none — [expframework/scriptengine.py:95](expframework/scriptengine.py:95) already reads this correctly | Template-only gap: add the key to `default_config.yaml`. No code change. |
 | 11 | `protocols_dir`, `calibration_dir`, `exp_dir_structure`, `exp_report`, `eid_generator` | none currently | These exist in the template today but nothing reads them — adopting the format doesn't make them do anything. Each is a **separate feature to design and build**, not covered by this migration. Listed so they aren't assumed done once #3 lands. |
 
-**Suggested execution order, once reviewed:** #2 (design answer) → #7 (`active:` mechanism) → #1 (devices rename, now that #2 is answered) → #3, #4 (the two pure renames) → #5 (git_sync reshape, now that #7 exists) → #8 (`lit` stopgap or defer to §9) → #9 (delete abstraction) → #6 (new config-server feature, launcher work) → #10 (template gap). #11 stays a backlog, not part of this migration.
+**Suggested execution order, once reviewed:** #2 (design answer) → #7 (`active:` mechanism) → #1 (devices rename, now that #2 is answered) → #3, #4 (the two pure renames) → #5 (git_sync reshape, now that #7 exists) → #9 (delete abstraction) → #6 (new config-server feature, launcher work) → #10 (template gap, done). #8 is closed. #11 stays a backlog, not part of this migration.
+
+---
+
+## 13. What's safe now, and what touches `Experiment` / `ScopeAssembly`
+
+Asked directly 2026-09-05. Re-sorting §12 by blast radius rather than by
+sequence, since that's the more useful cut for deciding what to greenlight
+independently.
+
+### 13.1 Safe now — zero risk to any live scope
+
+These can be done without touching `expframework/experiment.py` or any of
+its mixins (`ExpSync`, `ExpReport`, ...), and without touching
+`hive/assembly.py`'s `ScopeAssembly` class:
+
+- **Everything in §7.3, the launcher, entire.** Environment activation, config
+  syntax validation, config-server sync, the new re-validation step, and the
+  `git_sync` reshape (#5) all run in `./trappyscope` / `startup.py`, *before*
+  `main.py` constructs anything. None of it can touch `Experiment` or
+  `ScopeAssembly` because neither object exists yet at that point in the
+  sequence. This is the single largest chunk of approved work with zero
+  blast radius on the two core classes.
+- **`active:` filtering, the mechanism itself (#7).** Lives entirely in
+  `TrappyConfig` (`core/permaconfig/config.py`). Writing it is safe; it only
+  becomes risky once something is pointed at it — see §13.2.
+- **`config_redact_fields`, the redaction logic itself (§7.2).** A new,
+  currently-uncalled method (e.g. `TrappyConfig.redacted_copy()`) is pure
+  addition — zero risk until something calls it. Wiring it into "every
+  experiment carries a copy of its config" is where it stops being free; see
+  §13.2.
+- **Template and doc edits.** Already applied this session: `type:` removed,
+  `autostart_cli_after_reboot` and `Experiment.scripts_dirs` added to
+  `default_config.yaml` (#10, and the `type:`/`autostart_cli_after_reboot`
+  decisions above).
+- **Deleting code that is already inert.** The malformed
+  `sys.path.append("'/Users/...")` line in `hive/assembly.py` (already a
+  no-op — stray quote, hardcoded to one machine) can be deleted with zero
+  behaviour change. It's inside the `ScopeAssembly` file, but removing dead
+  code isn't a design change to the class.
+- **`lit` (#8).** Closed — nothing to do.
+
+### 13.2 Requires touching `ScopeAssembly`
+
+- **#1, `devices:` → `ScopeAssembly:`.** [hive/assembly.py:113](hive/assembly.py:113).
+  Doable **without breaking anything currently deployed**: make `open()`
+  prefer `scopeconfig["ScopeAssembly"]` and fall back to
+  `scopeconfig["devices"]` if absent, rather than a hard rename. New configs
+  use the new key; M1, M8, and every other live scope keep working unchanged
+  until migrated on their own schedule.
+- **#2, the host-processor-group question.** Still open — not resolved this
+  session. Whatever the answer, it changes `ScopeAssembly.__init__`.
+- **#9, dropping `abstraction`.** Deleting `__abstraction__()` and the
+  ignored `abstraction=` parameter from `open()` touches
+  [hive/assembly.py:64](hive/assembly.py:64), plus one knock-on line: the
+  call site in [expenv/recipes/freestyle.py](expenv/recipes/freestyle.py)
+  passes `abstraction="microscope"` and would need that argument dropped
+  too, or it raises `TypeError` for an unexpected keyword once `open()`'s
+  signature changes.
+- **Deferred, not now:** `metaclass`/`read_method`/`write_method` coercion
+  (§8) and the proxy/tree/aggregate design (§9) both land in `open()`'s
+  device-construction loop and the ABC layer (`hive/basedevice.py`,
+  `hive/detector.py`, `hive/actuator.py`) whenever they're built.
+
+### 13.3 Requires touching `Experiment` (or a mixin: `ExpSync`, `ExpReport`)
+
+- **#3, `config.expdir` → `Experiment.exp_dir`.** Three sites in
+  [expframework/experiment.py](expframework/experiment.py) (lines 163, 197,
+  294). Same non-breaking pattern as #1: read `Experiment.exp_dir` first,
+  fall back to `config.expdir`.
+- **#4, `config.file_server` → `Experiment.file_server`.** Six keys in
+  `ExpSync.configure()` ([expframework/expsync.py:29-35](expframework/expsync.py:29)).
+  Same fallback pattern.
+- **Wiring `active:` filtering into a real effect.** The mechanism (§13.1)
+  can be written in isolation, but `ExpSync.configure()` currently does
+  `scopeconfig["config"]["file_server"]["active"]` — a literal key lookup.
+  Once `TrappyConfig` can hide an inactive block entirely, that block simply
+  won't be there to look up "active" on. `ExpSync` (and the `venv` check in
+  the launcher, which is *not* Experiment-side) both need to change from
+  "read the active flag" to "treat an absent block as inactive." This is the
+  one item that looks like a TrappyConfig-only change but isn't — it doesn't
+  do anything until its consumers change too.
+- **Wiring `config_redact_fields` into use.** The redaction method itself is
+  free (§13.1); making "every experiment carries a copy of the config it ran
+  under" real means `Experiment.__init__` or `Experiment.new()` gains a step
+  that calls it and writes the result into the experiment directory.
+- **Deferred, not now:** if `exp_dir_structure`, `eid_generator`, or
+  `exp_report` are ever actually implemented (#11 — currently just inert
+  template keys), `Experiment.new()` hardcodes the directory list today and
+  would need to read the config's list instead; `eid_generator` would need
+  `Experiment.new()`'s `uid()` call replaced with a dynamic import of
+  whatever function the config names; `exp_report` would need to gate
+  whether `ExpReport.__init__` runs at all.
