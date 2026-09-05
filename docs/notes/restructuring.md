@@ -669,12 +669,68 @@ automatically.
   overwrites the assembly's own API. Either reject names that collide with an
   existing attribute, or keep a reserved-word list — undecided which is
   better.
-- **`abstraction` goes.** The concept is not worth keeping; the ignored
-  `open(..., abstraction=)` parameter and `__abstraction__()` go with it.
+- ~~**`abstraction` goes.**~~ **Reopened 2026-09-05 — see §9.3.** The old
+  role-mapping concept (one device set, reinterpreted) is still going. What's
+  reopened is whether the *keyword* gets reused for a new, unrelated purpose:
+  selecting among multiple, disjoint hardware profiles in one config.
 - **The hardcoded `sys.path.append` at `assembly.py:112` goes.** It points at
   one machine and contains a stray quote, so it has never done anything.
 - **`__device_type__`** was never made to work. It stays unimplemented rather
   than half-present.
+
+### 9.3 Reopened: multiple named `ScopeAssembly:` profiles — undecided
+
+Motivation: one config should be able to describe more than one hardware
+topology (a microscope vs. a computing-cluster node), selected rather than
+merged. Proposed grammar:
+
+```yaml
+abstraction: microscope   # selector
+ScopeAssembly:
+  microscope: {cam: {...}}
+  cluster:    {pico1: {...}}
+```
+
+**Not decided; two concerns raised, one alternative on the table:**
+
+1. **Naming collision.** `abstraction:` already meant something else in this
+   codebase's history (§2's live-config role-map, `__abstraction__()`) —
+   reusing the word for "select a disjoint profile" is a different concept
+   wearing the old name. If kept, document it as a deliberate rename of
+   meaning, not a revival.
+2. **Grammar ambiguity.** `ScopeAssembly:`'s shape (flat device list vs.
+   nested-by-profile) would depend on whether the sibling `abstraction:` key
+   exists. Forgetting it doesn't fail cleanly — `open()` tries to read a
+   profile's device dict as if it were one device, producing a confusing
+   `KeyError` deep in construction. Exactly the failure mode §7.3 step 1
+   exists to prevent. Since nothing live uses `ScopeAssembly:` yet, there's no
+   migration cost to choosing an unambiguous grammar instead (e.g. always
+   nested-by-name; a selector required only when more than one name exists).
+3. **Alternative: this may already be solved.** `core/permaconfig/config.py:53-61`
+   shows `TrappyConfig` already layers `confuse` sources — default, the
+   scope's file, then each entry in `config.config_files: []` (stubbed in the
+   template, never populated in any live config). A file-per-profile design
+   (`trappyconfig.microscope.yaml`, `trappyconfig.cluster.yaml`, common
+   `Experiment:`/`config:` in a shared base) reuses working infrastructure
+   instead of inventing a new nested-dict grammar, and every file stays
+   independently valid — no shape-ambiguity possible.
+4. **Open regardless of which design wins:** once config-server sync (§7.3
+   step 2) exists, does one shared file/profile-set get pushed to both
+   microscopes and cluster nodes? If so, something needs to know which
+   profile/file belongs to which machine (by hostname, presumably). Not a
+   reason to prefer either grammar — the problem exists either way.
+
+### 9.4 Reopened: `active:` removal from `ExpSync.configure()`
+
+Requested 2026-09-05: strip the manual `scopeconfig["config"]["file_server"]["active"]`
+check out of `ExpSync`. **Correct once §7.1 lands, unsafe before it.** The live
+config's `file_server.active: False` is what currently stops `ExpSync.__init__`
+from attempting an SMB mount on this dev machine — removing the check with
+nothing to replace it makes that mount attempt unconditional. Sequencing
+proposed: land this together with §7.1's `TrappyConfig`-level filtering, at
+which point an inactive block is simply absent and `ExpSync` reading a
+now-missing key is itself the "not configured" signal — no dedicated flag
+needed. Not done independently of §7.1.
 
 ---
 
