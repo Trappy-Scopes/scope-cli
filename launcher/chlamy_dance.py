@@ -19,7 +19,19 @@ import sys
 import time
 
 # ---------------------------------------------------------------- geometry ---
-W, H = 78, 36          # character grid
+SCALE = 0.5            # linear scale of the whole drawing; W, H, and every
+                        # length-like quantity below (rx, ry, flagellum
+                        # length, eyespot size) scale with this. Angles
+                        # (spread, curl, wave, lean) are shape parameters,
+                        # not distances, and are deliberately left alone.
+## Forced even: cx = W/2 must be a whole number. The original 78 is even for
+## exactly this reason -- an odd W gives a half-integer center, and Python's
+## round() (round-half-to-even) then collides two adjacent x offsets onto
+## the same grid column, leaving the other one's column unpainted. Confirmed
+## empirically: SCALE=0.5 gives W=39 (odd) and visible gaps in the body fill;
+## forcing W=40 (even) removes them.
+W = 2 * round(78 * SCALE / 2)
+H = 2 * round(36 * SCALE / 2)   # character grid
 YS = 2                 # one row is about two column-widths tall
 DURATION = 6.0         # seconds, seamless loop
 
@@ -83,7 +95,7 @@ def slope_glyph(dx, dy):
 
 
 # ---------------------------------------------------------------- the cell ---
-def draw_body(g, cx, cy, rx, ry):
+def draw_body(g, cx, cy, rx, ry, scale=1.0):
     """Solid green block body, solid white rim, solid white eyespot."""
     for y in range(-math.ceil(ry) - 1, math.ceil(ry) + 2):
         for x in range(-math.ceil(rx) - 1, math.ceil(rx) + 2):
@@ -96,10 +108,14 @@ def draw_body(g, cx, cy, rx, ry):
         a = (i / 420) * math.pi * 2
         g.put(cx + rx * math.cos(a) * 1.02, cy + ry * math.sin(a) * 1.02, '█', INK)
 
+    # Eyespot extent is in whole character cells, so it doesn't scale for
+    # free the way rx/ry (continuous) do -- scaled explicitly here.
+    # scale=1.0 reproduces the original range(-2,3)/(-1,0,1)/2.2/1.1 exactly.
     ex, ey = cx + rx * 0.5, cy - ry * 0.3
-    for y in (-1, 0, 1):
-        for x in range(-2, 3):
-            if math.hypot(x / 2.2, y / 1.1) > 1:
+    eye_w, eye_h = max(1, round(2 * scale)), max(0, round(1 * scale))
+    for y in range(-eye_h, eye_h + 1):
+        for x in range(-eye_w, eye_w + 1):
+            if math.hypot(x / (eye_w + 0.2), y / (eye_h + 0.1)) > 1:
                 continue
             g.put(ex + x, ey + y, '█', EYE)
 
@@ -123,7 +139,7 @@ def draw_flagellum(g, bx, by, h0, curl, length, wave, phase):
 def frame(T):
     """The whole animation as a pure function of authored time (0..6 s)."""
     g = Grid()
-    cx, cy, rx, ry = W / 2, H / 2 + 1, 6.4, 8.6
+    cx, cy, rx, ry = W / 2, H / 2 + 1, 6.4 * SCALE, 8.6 * SCALE
 
     beat = snap(T, 8)                        # eight snaps a second
     stroke = math.sin(beat * math.pi * 4)    # two beats a second
@@ -158,6 +174,8 @@ def frame(T):
         curl = glide(2.6, 1.45, 0.45, 1)(p)
         wave = glide(0.9, 0.5, 0.45, 1)(p)
 
+    length *= SCALE  # curl/wave/spread/lean are angles, not distances -- left alone
+
     for side in (-1, 1):
         # keep every flagellum in the upward fan: no tip swings below its base
         h0 = clamp(-math.pi / 2 + side * (0.2 + spread) + lean, -math.pi + 0.55, -0.55)
@@ -166,7 +184,7 @@ def frame(T):
                        side * clamp(curl, 0.4, max(0.4, room)),
                        length, side * wave, phase * 0.5)
 
-    draw_body(g, cx, cy, rx, ry)
+    draw_body(g, cx, cy, rx, ry, scale=SCALE)
 
     for x in range(W):
         g.ch[0][x] = g.ch[H - 1][x] = '─'
