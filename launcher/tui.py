@@ -30,7 +30,6 @@ import termios
 import time
 import tty
 
-from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
 from rich.text import Text
@@ -182,7 +181,21 @@ def _venv_line():
 	return line
 
 
-def _render(menu, elapsed, version=None, venv_line=None):
+def _left_pad_lines(text, pad):
+	"""Prepend `pad` spaces to every line of a (possibly multi-line,
+	possibly styled) Text, preserving each line's own style spans."""
+	if pad <= 0:
+		return text
+	padded = Text()
+	for i, line in enumerate(text.split("\n")):
+		if i > 0:
+			padded.append("\n")
+		padded.append(" " * pad)
+		padded.append_text(line)
+	return padded
+
+
+def _render(menu, elapsed, console_width, version=None, venv_line=None):
 	t = elapsed % dance.DURATION
 	animation = Text.from_ansi(dance.render(dance.frame(t, border=False)), no_wrap=True)
 
@@ -193,24 +206,13 @@ def _render(menu, elapsed, version=None, venv_line=None):
 	if venv_line is not None:
 		header.append(venv_line)
 
-	visible_items, offset, more_above, more_below = menu.visible()
+	visible_items, scroll_offset, more_above, more_below = menu.visible()
 
 	## Two columns, column-major: the first half of the visible window down
 	## the left column, the rest down the right -- reads the same order the
 	## flat item list is already in, so up()/down() (index-based, unaware of
 	## columns) still lands where you'd expect.
-	##
-	## Built as one plain multi-line Text, not a Table: Align.center (below)
-	## centers each rendered *line* of the group independently, based on
-	## that line's own width -- not the block as a whole. The animation and
-	## header lines stay centered "for free" only because every animation
-	## row is the same fixed width and the header texts set justify=
-	## "center" themselves; a Table's rows don't get measured this way at
-	## all, and unpadded menu rows of differing length each land at a
-	## different, wrong center. Every row here is therefore right-padded to
-	## the SAME total width, so Align computes the same (correct) offset
-	## for every one of them.
-	entries = list(enumerate(visible_items, start=offset))
+	entries = list(enumerate(visible_items, start=scroll_offset))
 	split = (len(entries) + 1) // 2
 	left, right = entries[:split], entries[split:]
 
@@ -236,9 +238,7 @@ def _render(menu, elapsed, version=None, venv_line=None):
 		if row < len(right):
 			ri, (rkey, rlabel) = right[row]
 			rprefix = "> " if ri == menu.index else "  "
-			menu_lines.append(f"{rprefix}{rlabel}".ljust(col_width), style=entry_style(rkey, ri))
-		else:
-			menu_lines.append("".ljust(col_width))
+			menu_lines.append(f"{rprefix}{rlabel}", style=entry_style(rkey, ri))
 		menu_lines.append("\n")
 
 	scroll_hints = []
@@ -247,13 +247,39 @@ def _render(menu, elapsed, version=None, venv_line=None):
 	if more_below:
 		scroll_hints.append("↓ more below")
 
+	## Align.center does NOT reliably centre this composition: it centres
+	## each rendered *line* independently, based on that line's own visible
+	## width -- and, verified directly, that measurement strips trailing
+	## whitespace first. A menu row right-padded to a uniform total length
+	## (the previous attempt at this fix) therefore still measures as
+	## whatever text precedes the padding, which differs row to row, so
+	## Align lands each row at a different offset regardless. The animation
+	## (every row a fixed 39 characters, no trailing-whitespace ambiguity)
+	## and the header/hint Texts (self-centering via their own justify=
+	## "center", independent of Align) happened to look right before the
+	## menu had rows of very different lengths -- which is exactly why this
+	## surfaced only once the menu went two columns wide.
+	##
+	## Fixed here by computing the centering offset once, from the actual
+	## live terminal width, and left-padding the animation and menu block
+	## ourselves -- no Align involved for either. The header/hint Texts
+	## keep their own justify="center" (self-centering against the full
+	## console width, verified to work with no Align wrapper at all): since
+	## the manually-centered block's own midpoint is put at console_width/2
+	## by construction, both approaches land on the same centerline.
+	content_width = max(dance.W, row_width)
+	pad = max(0, (console_width - content_width) // 2)
+
+	animation = _left_pad_lines(animation, pad)
+	menu_lines = _left_pad_lines(menu_lines, pad)
+
 	body = [animation, Text(), *header, Text(), menu_lines]
 	if scroll_hints:
 		body.append(Text("   ".join(scroll_hints), style="dim", justify="center"))
 	body.append(Text())
 	body.append(Text("↑/↓ move   enter select   Esc/q quit", style="dim", justify="center"))
 
-	return Align.center(Group(*body))
+	return Group(*body)
 
 
 def _show_menu():
@@ -277,10 +303,15 @@ def _show_menu():
 	old_settings = termios.tcgetattr(fd)
 	try:
 		tty.setcbreak(fd)
-		with Live(_render(menu, 0, version, venv_line), console=console, screen=False,
+		with Live(_render(menu, 0, console.width, version, venv_line), console=console, screen=False,
 				  auto_refresh=False, transient=True) as live:
 			while True:
-				live.update(_render(menu, time.monotonic() - start, version, venv_line), refresh=True)
+				## console.width read fresh every frame, not cached from
+				## before the loop started -- a resized terminal window
+				## must recentre on the next frame, not stay centered for
+				## whatever size the window happened to be at launch.
+				live.update(_render(menu, time.monotonic() - start, console.width, version, venv_line),
+							refresh=True)
 
 				ready, _, _ = select.select([fd], [], [], 1 / FPS)
 				if not ready:
