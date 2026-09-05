@@ -56,21 +56,48 @@ MENU_ITEMS = [
 
 
 class Menu:
-	"""Selection state for a simple up/down/enter menu. No widget, no magic."""
+	"""
+	Selection state for a simple up/down/enter menu. No widget, no magic.
+
+	Scrolls once there are more items than WINDOW_SIZE: the visible window
+	tracks the selected index, and wrapping past either end (top -> bottom,
+	bottom -> top) resets the window to that end rather than leaving it
+	stranded mid-list. Added once "Device tree" pushed the menu to 9 items
+	-- past the point where every item fit on screen at once next to the
+	animation.
+	"""
+
+	WINDOW_SIZE = 6
 
 	def __init__(self, items):
 		self.items = items
 		self.index = 0
+		self.offset = 0
 
 	@property
 	def selected_key(self):
 		return self.items[self.index][0]
 
+	def _clamp_offset(self):
+		window = min(self.WINDOW_SIZE, len(self.items))
+		if self.index < self.offset:
+			self.offset = self.index
+		elif self.index >= self.offset + window:
+			self.offset = self.index - window + 1
+
 	def up(self):
 		self.index = (self.index - 1) % len(self.items)
+		self._clamp_offset()
 
 	def down(self):
 		self.index = (self.index + 1) % len(self.items)
+		self._clamp_offset()
+
+	def visible(self):
+		"""(visible_items, offset, more_above, more_below) for rendering."""
+		window = min(self.WINDOW_SIZE, len(self.items))
+		end = self.offset + window
+		return self.items[self.offset:end], self.offset, self.offset > 0, end < len(self.items)
 
 
 def _decode_key(first, read_byte):
@@ -162,8 +189,12 @@ def _render(menu, elapsed, version=None, venv_line=None):
 	if venv_line is not None:
 		header.append(venv_line)
 
+	visible_items, offset, more_above, more_below = menu.visible()
+
 	menu_lines = Text()
-	for i, (key, label) in enumerate(menu.items):
+	if more_above:
+		menu_lines.append("↑ more above\n", style="dim")
+	for i, (key, label) in enumerate(visible_items, start=offset):
 		selected = i == menu.index
 		prefix = "> " if selected else "  "
 		if selected:
@@ -173,6 +204,8 @@ def _render(menu, elapsed, version=None, venv_line=None):
 		else:
 			style = "green"
 		menu_lines.append(f"{prefix}{label}\n", style=style)
+	if more_below:
+		menu_lines.append("↓ more below\n", style="dim")
 
 	return Align.center(Group(animation, Text(), *header, Text(), menu_lines))
 
