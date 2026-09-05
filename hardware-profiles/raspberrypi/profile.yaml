@@ -1,0 +1,9 @@
+# Native hardware profile: Raspberry Pi (any model with a device tree --
+# 32-bit or 64-bit Raspberry Pi OS).
+#
+# `detect` is a shell command, not a fixed schema field -- deliberately, so
+# an external/custom profile (see config.hardware_profile_dirs) can use
+# whatever signal fits its own board, not just what this schema anticipated.
+# Exit code 0 means "this profile applies."
+name: raspberrypi
+detect: "grep -q 'Raspberry Pi' /proc/device-tree/model 2>/dev/null"

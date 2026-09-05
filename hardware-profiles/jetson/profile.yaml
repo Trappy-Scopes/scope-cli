@@ -1,0 +1,5 @@
+# Native hardware profile: NVIDIA Jetson (any model running JetPack/Jetson
+# Linux). /etc/nv_tegra_release is NVIDIA's own long-standing marker file
+# for exactly this detection.
+name: jetson
+detect: "test -f /etc/nv_tegra_release"

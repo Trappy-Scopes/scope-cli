@@ -1,0 +1,5 @@
+# Tier 1a for Jetson. Deliberately thin -- lower confidence here than the
+# Raspberry Pi profile; verify against real hardware before relying on it.
+# Jetson.GPIO is NVIDIA's own official GPIO library (the real Jetson
+# equivalent of RPi.GPIO); left as the one concrete entry.
+Jetson.GPIO>=2.1

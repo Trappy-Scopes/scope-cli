@@ -1,0 +1,12 @@
+# Tier 1b for Jetson. No apt_only entry here on purpose -- Jetson's camera
+# stack (nvargus/GStreamer-based, not a single apt package the way
+# picamera2 is) needs real-hardware verification before naming a specific
+# package; left out rather than guessed.
+
+native:
+  - fim
+  - tree
+
+conda_forge:
+  - pandoc
+  - graphviz
