@@ -24,14 +24,8 @@ SCALE = 0.5            # linear scale of the whole drawing; W, H, and every
                         # length, eyespot size) scale with this. Angles
                         # (spread, curl, wave, lean) are shape parameters,
                         # not distances, and are deliberately left alone.
-## Forced even: cx = W/2 must be a whole number. The original 78 is even for
-## exactly this reason -- an odd W gives a half-integer center, and Python's
-## round() (round-half-to-even) then collides two adjacent x offsets onto
-## the same grid column, leaving the other one's column unpainted. Confirmed
-## empirically: SCALE=0.5 gives W=39 (odd) and visible gaps in the body fill;
-## forcing W=40 (even) removes them.
-W = 2 * round(78 * SCALE / 2)
-H = 2 * round(36 * SCALE / 2)   # character grid
+W = round(78 * SCALE)   # character grid
+H = round(36 * SCALE)
 YS = 2                 # one row is about two column-widths tall
 DURATION = 6.0         # seconds, seamless loop
 
@@ -75,7 +69,15 @@ class Grid:
         self.co = [[None] * W for _ in range(H)]
 
     def put(self, x, y, c, color):
-        xi, yi = round(x), round(y)
+        ## floor(v + 0.5), not round(v): Python's round() is round-half-to-
+        ## even, so a half-integer *center* (an odd W/H gives cx=W/2 a .5
+        ## value) causes consecutive integer offsets to round in pairs onto
+        ## the same column -- e.g. cx=19.5 sends both x=0 and x=1 to column
+        ## 20, never to 19 or 21. floor(v+0.5) is monotonic and collision-
+        ## free for evenly-spaced offsets regardless of parity. For whole-
+        ## number v (the original W=78 case, cx=39.0 exactly) the two are
+        ## identical, so this changes nothing at that size.
+        xi, yi = math.floor(x + 0.5), math.floor(y + 0.5)
         if xi < 1 or xi > W - 2 or yi < 1 or yi > H - 2:
             return
         self.ch[yi][xi] = c
@@ -144,13 +146,7 @@ def frame(T, border=True):
     visual clutter around it.
     """
     g = Grid()
-    ## rx/ry scale from the *realized* W/H, not the nominal SCALE: W was
-    ## rounded up to the nearest even number (78*0.5 = 39 is odd -- see
-    ## above), so it's not exactly SCALE*78. Using SCALE directly here would
-    ## proportion the body for a canvas 2.5% narrower than the one actually
-    ## drawn, stretching the body relative to the frame. H needed no such
-    ## rounding, so ry * SCALE and ry * (H/36) are identical.
-    cx, cy, rx, ry = W / 2, H / 2 + 1, 6.4 * (W / 78), 8.6 * (H / 36)
+    cx, cy, rx, ry = W / 2, H / 2 + 1, 6.4 * SCALE, 8.6 * SCALE
 
     beat = snap(T, 8)                        # eight snaps a second
     stroke = math.sin(beat * math.pi * 4)    # two beats a second
