@@ -6,17 +6,6 @@ authors = [
     {name = "Yatharth Bhasin",email = "yatharth1997@gmail.com"}
 ]
 readme = "README.md"
-
-[project.scripts]
-trappyscope = "launcher:main"
-
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
-
-
-
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "asciichartpy (>=1.5.25,<2.0.0)",
@@ -71,5 +60,25 @@ dependencies = [
     "html2rml (>=0.3.2,<0.4.0)",
     "icalendar (>=6.3.1,<7.0.0)",
     "timeboard (>=0.2.4,<0.3.0)",
+    # Previously only declared in core/installer/installer.py's Installer.pylibs,
+    # absent here -- two lists disagreeing on what this project needs. Reconciled.
+    "art",
+    "beautifulsoup4",
+    "paho-mqtt",
+    "sounddevice",
+    "websockets",
 ]
 
+# Phase 2 will add [project.optional-dependencies] groups here (raspberrypi,
+# jetson, ...) once hardware-profiles/ exists -- see docs/notes/restructuring.md.
+
+[project.scripts]
+trappyscope = "launcher:main"
+
+[build-system]
+# Poetry removed: uv is the backbone going forward (see restructuring.md).
+# hatchling is a minimal, PEP 621-native build backend -- no dialect of its
+# own to fight with, unlike poetry-core, which is exactly how the
+# dependencies/requires-python misplacement bug happened in the first place.
+requires = ["hatchling"]
+build-backend = "hatchling.build"
