@@ -136,10 +136,21 @@ def draw_flagellum(g, bx, by, h0, curl, length, wave, phase):
         y += dy
 
 
-def frame(T):
-    """The whole animation as a pure function of authored time (0..6 s)."""
+def frame(T, border=True):
+    """
+    The whole animation as a pure function of authored time (0..6 s).
+    border: draw the enclosing box. The launcher turns this off -- the
+    animation there sits directly above the menu, and the box read as
+    visual clutter around it.
+    """
     g = Grid()
-    cx, cy, rx, ry = W / 2, H / 2 + 1, 6.4 * SCALE, 8.6 * SCALE
+    ## rx/ry scale from the *realized* W/H, not the nominal SCALE: W was
+    ## rounded up to the nearest even number (78*0.5 = 39 is odd -- see
+    ## above), so it's not exactly SCALE*78. Using SCALE directly here would
+    ## proportion the body for a canvas 2.5% narrower than the one actually
+    ## drawn, stretching the body relative to the frame. H needed no such
+    ## rounding, so ry * SCALE and ry * (H/36) are identical.
+    cx, cy, rx, ry = W / 2, H / 2 + 1, 6.4 * (W / 78), 8.6 * (H / 36)
 
     beat = snap(T, 8)                        # eight snaps a second
     stroke = math.sin(beat * math.pi * 4)    # two beats a second
@@ -186,14 +197,15 @@ def frame(T):
 
     draw_body(g, cx, cy, rx, ry, scale=SCALE)
 
-    for x in range(W):
-        g.ch[0][x] = g.ch[H - 1][x] = '─'
-        g.co[0][x] = g.co[H - 1][x] = FRAME
-    for y in range(H):
-        g.ch[y][0] = g.ch[y][W - 1] = '│'
-        g.co[y][0] = g.co[y][W - 1] = FRAME
-    g.ch[0][0], g.ch[0][W - 1] = '┌', '┐'
-    g.ch[H - 1][0], g.ch[H - 1][W - 1] = '└', '┘'
+    if border:
+        for x in range(W):
+            g.ch[0][x] = g.ch[H - 1][x] = '─'
+            g.co[0][x] = g.co[H - 1][x] = FRAME
+        for y in range(H):
+            g.ch[y][0] = g.ch[y][W - 1] = '│'
+            g.co[y][0] = g.co[y][W - 1] = FRAME
+        g.ch[0][0], g.ch[0][W - 1] = '┌', '┐'
+        g.ch[H - 1][0], g.ch[H - 1][W - 1] = '└', '┘'
     return g
 
 

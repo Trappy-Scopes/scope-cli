@@ -43,6 +43,7 @@ MENU_ITEMS = [
 	("install", "Install / setup"),
 	("intro", "Show the introduction"),
 	("edit", "Edit the configuration file"),
+	("exit", "Exit"),
 ]
 
 
@@ -88,19 +89,48 @@ def _decode_key(first, read_byte):
 	return None
 
 
-def _render(menu, elapsed):
+def _version_line():
+	"""
+	"<short commit> · <date of that commit>", or None if this isn't a git
+	checkout (e.g. installed from a wheel) or has no commits yet. Computed
+	once by the caller, not per frame -- git.Repo() plus a commit lookup is
+	too slow to redo twenty times a second.
+
+	Uses GitPython, not subprocess -- the established pattern in this
+	codebase (core/bookkeeping/session.py already does exactly this to
+	record a commit id per session).
+	"""
+	try:
+		import git
+		from core.permaconfig.sharing import Share
+		commit = git.Repo(Share.scopecli_fullpath).head.commit
+		return f"{commit.hexsha[:7]} · {commit.committed_datetime:%Y-%m-%d}"
+	except Exception:
+		return None
+
+
+def _render(menu, elapsed, version=None):
 	t = elapsed % dance.DURATION
-	animation = Text.from_ansi(dance.render(dance.frame(t)), no_wrap=True)
+	animation = Text.from_ansi(dance.render(dance.frame(t, border=False)), no_wrap=True)
 
 	title = Text("Trappy-Scopes launcher", style="bold", justify="center")
+	header = [title]
+	if version:
+		header.append(Text(version, style="dim", justify="center"))
 
 	menu_lines = Text()
-	for i, (_, label) in enumerate(menu.items):
-		prefix = "> " if i == menu.index else "  "
-		style = "reverse" if i == menu.index else ""
+	for i, (key, label) in enumerate(menu.items):
+		selected = i == menu.index
+		prefix = "> " if selected else "  "
+		if selected:
+			style = "bold black on bright_green"
+		elif key == "exit":
+			style = "grey58"
+		else:
+			style = "green"
 		menu_lines.append(f"{prefix}{label}\n", style=style)
 
-	return Align.center(Group(animation, Text(), title, Text(), menu_lines))
+	return Align.center(Group(animation, Text(), *header, Text(), menu_lines))
 
 
 def run_launcher():
@@ -112,15 +142,16 @@ def run_launcher():
 	console = Console()
 	choice = None
 	start = time.monotonic()
+	version = _version_line()
 
 	fd = sys.stdin.fileno()
 	old_settings = termios.tcgetattr(fd)
 	try:
 		tty.setcbreak(fd)
-		with Live(_render(menu, 0), console=console, screen=False,
+		with Live(_render(menu, 0, version), console=console, screen=False,
 				  auto_refresh=False, transient=True) as live:
 			while True:
-				live.update(_render(menu, time.monotonic() - start), refresh=True)
+				live.update(_render(menu, time.monotonic() - start, version), refresh=True)
 
 				ready, _, _ = select.select([fd], [], [], 1 / FPS)
 				if not ready:
@@ -151,7 +182,7 @@ def run_launcher():
 	finally:
 		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-	if choice is None:
+	if choice is None or choice == "exit":
 		return
 
 	from .utilities import (check_config, edit_config, installer, intro,
