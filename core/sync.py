@@ -1,96 +1,111 @@
-import time
-import config.common
+"""
+General-purpose file-sync primitives: mount a share, run rsync.
+
+Not experiment- or config-specific. Both `ExpSync` (syncing experiment data)
+and the launcher's config-sync utility (syncing the trappyverse/ folder) need
+"connect to a share, transfer files" -- this is the one place that logic
+lives, so it only has to be gotten right once.
+
+Shells out to the real `rsync` binary rather than a third-party Python rsync
+package: rsync already handles archive mode, compression, update-only,
+delta-transfer and dry-run as plain CLI flags, and this codebase already had
+working precedent doing exactly this (the old ExpSync.sync_file) before this
+module existed.
+
+This file replaces a previous, dead `SyncEngine` class here that imported a
+`config.common` module which does not exist anywhere in this repository and
+was never actually invoked by anything live.
+"""
+
+import logging as log
 import os
+import platform
 import subprocess
-import sys
-import colorama
-
-class SyncEngine:
-
-	def sync_all(deviceid):
-		"""
-		Does not call pico sync
-		"""
-		SyncEngine.git_sync(deviceid)
-		SyncEngine.fsync(deviceid)
+import time
 
 
-	def git_sync(deviceid):
-		if deviceid["git_sync"]:
-			print("Attempting git sync.")
-			output = subprocess.check_output(["git", "pull", "--recurse-submodules"])
-			output = output.decode()
-			print(f"{colorama.Fore.YELLOW}output{colorama.Fore.RESET}")
-			if not "Already up to date." in output:
-				print(f"{colorama.Fore.RED}Please restart script. Updates were pulled.{colorama.Fore.RESET}")
-				sys.exit()
-		else:
-			print("Skipping git sync...")
+def mount(server, share, username, password):
+	"""
+	Mount an SMB share. Returns the local mount point.
+	"""
+	system = platform.system()
 
-	def fsync(deviceid, remote=False):
-		"""
-		a : recursively sync while preserving timestamps, etc
-		v : verbose
-		h : human readable numbers
-		P : progress report
-		"""
-		
-		if deviceid["file_server"]:
-			datadir = config.common.DATA_DIR
-			print(colorama.Fore.BLUE)
-			print("Attempting file server sync.")
-			print(f"From: {datadir}\nTo: {deviceid['file_server']}")
-			if not datadir.endswith("/"):
-				datadir += "/"
-			if not remote:
-				subprocess.run(["rsync", "-avhi", "--stats", datadir, deviceid['file_server']])
-			else:
-				print("Implementation missing!")
-			print(colorama.Fore.RESET)
-	
+	if system == "Linux":
+		mount_point = f"/mnt/{share}"
+		command = [
+			"sudo", "mount", "-t", "cifs", f"//{server}/{share}", mount_point,
+			"-o", f"username={username},password={password},rw,"
+				  f"file_mode=0777,dir_mode=0777,uid=1000,gid=1000",
+		]
+		try:
+			subprocess.run(command, check=True)
+			time.sleep(5)
+		except subprocess.CalledProcessError as e:
+			if "error(16)" not in str(e):
+				raise
+			log.info("Share already mounted.")
+		return mount_point
 
-	def pico_fsync(pico):
-		
-		print("Attempting pico device sync.")
-		pico.sync_files("./utilities/pico_firmware/")
-		#pico.sync_files("./cameras/")
-		#pico.sync_files("./lights/")
+	elif system == "Darwin":
+		command = ["open", f"smb://{username}:{password}@{server}/{share}"]
+		subprocess.run(command, check=True)
+		time.sleep(5)
+		return f"/Volumes/{share}"
 
-		pico.sync(os.path.join(config.root, "/Trappy-Scopes/pico_firmware/"))
+	else:
+		raise NotImplementedError(f"Mounting not implemented for {system!r}.")
 
-	def check_nfs(server="smb://TrappyCloud"):
-		from smbprotocol.connection import Connection
-		from smbprotocol.session import Session
-		from smbprotocol.tree import Tree
 
-		# Replace these with your SMB server details
-		server_name = server
-		if "TrappyCloud" in server:
-			share_name = "G"
-		else:
-			share_name = "/"
-		guest_username = "guest"
-		guest_password = ""
+## Base flags for each sync mode. "update" (the default) is what "keep the
+## latest copy" means: rsync's -u skips a file at the destination if it's
+## newer than the source, so running this in both directions (pull, then
+## push, or vice versa) never overwrites a newer file with an older one.
+MODES = {
+	"mirror": ["-a"],                                                # exact copy, always overwrite
+	"update": ["-a", "-u"],                                          # skip files newer at the destination
+	"archive": ["-a", "-u", "--backup", "--backup-dir=.rsync-backup"],  # update, but keep what it would overwrite
+}
 
-		# Connect to the SMB server
-		connection = Connection()
-		connection.connect(server_name)
 
-		# Authenticate as guest with an empty password
-		session = Session(connection, server_name, guest_username, guest_password)
-		session.connect()
+def sync(source, destination, mode="update", flags=None, compress=False,
+		 dry_run=False, excludes=(), remove_source=False, prefix=()):
+	"""
+	Run rsync from `source` to `destination`.
 
-		# Connect to the shared folder
-		tree = Tree(session, share_name)
+	mode:      one of MODES, used to compute the base flags. Ignored if
+	           `flags` is given.
+	flags:     override the mode's base flags entirely, verbatim -- for
+	           callers with their own specific requirements (see ExpSync,
+	           which needs -W --no-compress --inplace for large binary
+	           experiment files where rsync's delta-transfer algorithm and
+	           compression aren't worth the overhead).
+	prefix:    command-prefix tokens prepended before `rsync` itself, e.g.
+	           ("sudo", "ionice", "-c2", "-n4") to throttle I/O priority so
+	           a sync doesn't compete with a live experiment.
+	remove_source: pass --remove-source-files (move rather than copy).
 
-		# Now you can perform operations on the shared folder, e.g., list files
-		print(f"Current composition of the nfs {server}:")
-		files = tree.list_directory("/")
-		for file_info in files:
-		    print(file_info)
+	Returns the completed subprocess.CompletedProcess; does not raise on a
+	non-zero exit, so a failed sync doesn't take down its caller -- check
+	`.returncode`.
+	"""
+	if flags is None:
+		if mode not in MODES:
+			raise ValueError(f"Unknown sync mode: {mode!r}. Choose from {list(MODES)}.")
+		flags = list(MODES[mode])
+	else:
+		flags = list(flags)
 
-		# Don't forget to disconnect when done
-		tree.disconnect()
-		session.disconnect()
-		connection.disconnect()
+	if compress:
+		flags.append("-z")
+	if dry_run:
+		flags.append("--dry-run")
+	if remove_source:
+		flags.append("--remove-source-files")
+	for pattern in excludes:
+		flags.append(f"--exclude={pattern}")
 
+	command = [*prefix, "rsync", *flags, source, destination]
+	result = subprocess.run(command, capture_output=True, text=True)
+	if result.returncode != 0:
+		log.error(f"rsync failed ({result.returncode}): {result.stderr.strip()}")
+	return result

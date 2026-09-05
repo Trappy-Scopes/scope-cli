@@ -1,10 +1,7 @@
 from rich import print
 import os
 import logging as log
-import asyncio
-import subprocess
 import platform
-import subprocess
 from concurrent.futures import ThreadPoolExecutor
 import time
 import datetime
@@ -14,6 +11,7 @@ from core.uid import uid
 from core.permaconfig.sharing import Share
 from core.permaconfig.config import TrappyConfig
 from core.bookkeeping.user import User
+import core.sync as sync
 
 class ExpSync:
 	"""
@@ -128,47 +126,12 @@ class ExpSync:
 
 	def mount(self, server, share, username, password):
 		"""
-		Mount an SMB share at a specified mount point.
-		
-		:param server: SMB server address (e.g., 192.168.1.10)
-		:param share: SMB share name (e.g., shared_folder)
-		:param mount_point: Local directory to mount the share
-		:param username: SMB username
-		:param password: SMB password
+		Mount an SMB share. See core.sync.mount -- not experiment-specific,
+		so the actual mounting logic lives there.
 		"""
-		import platform
-
-		if platform.system() == "Linux":
-			log.debug("Plateform is Linux.")
-			mount_point = "/mnt"
-			mount_cmd = ["sudo", "mount", "-t", "cifs", f"//{server}/{share}", \
-						f"{mount_point}/{share}", "-m", "-o", \
-						f"username={username},password={password},rw,file_mode=0777,dir_mode=0777,uid=1000,gid=1000"]
-			try:
-				subprocess.run(mount_cmd, check=True)
-				print(f"Mounted //{server}/{share} at {mount_point}/{share}.")
-				time.sleep(5)
-			except Exception as e:
-				print(e)
-				if "error(16)" in str(e):
-					log.info("file_server is already mounted!")
-			print(f"{mount_point} dir for reference: ", os.listdir(mount_point))
-			self.server = f"{mount_point}/{share}/"
-		elif platform.system() == "Darwin":
-			log.debug("Plateform is Darwin (MacOS).")
-			try:
-				mount_point = "/Volumes"
-				mount_cmd = ["open", f"smb://{username}:{password}@{server}/{share}"]
-				subprocess.run(mount_cmd, check=True)
-				print(f"Mounted //{server}/{share} at {mount_point}/{share}.")
-				time.sleep(5)
-				print("/Volumes dir for reference: ", os.listdir("/Volumes"))
-				self.server = f"{mount_point}/{share}/"
-			except subprocess.CalledProcessError as e:
-				print(f"Error mounting SMB share: {e}")
-		else:
-			log.error("Unsupported plateform (os).")
-			return
+		mount_point = sync.mount(server, share, username, password)
+		print(f"Mounted //{server}/{share} at {mount_point}.")
+		self.server = f"{mount_point}/"
 
 	def sync_dir(self, remove_source=False):
 		"""
@@ -222,28 +185,28 @@ class ExpSync:
 		if delay_sec:
 			time.sleep(delay_sec)
 
-		source_removal = []
-		if remove_source:
-			source_removal.append('--remove-source-files')
-		try:
-			# Running rsync command
-			#ionice -c1 -n0 rsync -aW --inplace --no-compress /source/ /mnt/nas/
-
-			command = [
-				'sudo', 'ionice', '-c2', '-n4', 'rsync', '-aW', '--no-compress', '--inplace', *source_removal,
-				os.path.join(os.getcwd(), file),
-				os.path.join(self.destination_dir, file)
-			]
-			result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-			log.info(f"Rsync completed for {file}")
-			print(f"Rsync completed for {file}")
-			if remove_source:
-				with open(".sync", "a") as f:
-					f.write(f"{file}, {datetime.datetime.now()}\n")
-			return result.stdout.decode()
-		except subprocess.CalledProcessError as e:
-			log.error(f"Error occurred with {file}: {e.stderr.decode()}")
+		## -W --no-compress --inplace: large binary experiment files (video,
+		## images) don't benefit from rsync's delta-transfer algorithm or
+		## compression -- the whole-file copy is cheaper than the comparison
+		## overhead. ionice throttles I/O priority so this doesn't compete
+		## with a live experiment still writing to the same disk.
+		result = sync.sync(
+			os.path.join(os.getcwd(), file),
+			os.path.join(self.destination_dir, file),
+			flags=["-a", "-W", "--no-compress", "--inplace"],
+			remove_source=remove_source,
+			prefix=["sudo", "ionice", "-c2", "-n4"],
+		)
+		if result.returncode != 0:
+			log.error(f"Error occurred with {file}: {result.stderr.strip()}")
 			return None
+
+		log.info(f"Rsync completed for {file}")
+		print(f"Rsync completed for {file}")
+		if remove_source:
+			with open(".sync", "a") as f:
+				f.write(f"{file}, {datetime.datetime.now()}\n")
+		return result.stdout
 
 
 
