@@ -101,6 +101,27 @@ def pull(label, path, console):
 		console.print(f"[red]Pull failed: {e}[/red]")
 
 
+def check_and_sync(console=None):
+	"""Show status for every declared repo (all_repos()), then -- if
+	confirmed -- pull whichever are behind their remote. Non-interactive
+	-menu equivalent of tui.py's _show_repo_menu() picker, for the "launch
+	normally" boot sequence (which has no menu to pick a single repo from)."""
+	console = console or Console()
+	repos = all_repos()
+	table, statuses = status_table(repos)
+	console.print(table)
+
+	pullable = [label for label, (dirty, ahead, behind, error) in statuses.items()
+				if error is None and behind]
+	if not pullable:
+		return
+	if not Confirm.ask(f"Pull {len(pullable)} repo(s) that are behind?", default=True):
+		return
+
+	for label in pullable:
+		pull(label, repos[label], console)
+
+
 if __name__ == "__main__":
 	_console = Console()
 	_table, _ = status_table(all_repos())
