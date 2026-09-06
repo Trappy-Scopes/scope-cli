@@ -59,6 +59,7 @@ MICROPYTHON_MENU_ITEMS = [
 	("flash_mpy", "Flash MicroPython"),
 	("flash_firmware", "Flash firmware"),
 	("configure_board", "Configure board"),
+	("wipe_device", "Wipe device"),
 	("back", "< Back"),
 ]
 
@@ -360,18 +361,19 @@ def _show_menu(items=None):
 def _show_micropython_menu():
 	"""
 	The "MicroPython >" submenu -- Flash MicroPython / Flash firmware /
-	Configure board. Runs its own loop (same return-to-menu-or-leave prompt
-	as the top-level one) until the user picks "< Back" or quits, at which
-	point control returns to run_launcher()'s own loop, redrawing the top
-	menu -- not the whole launcher exiting.
+	Configure board / Wipe device. Runs its own loop (same return-to-menu-
+	or-leave prompt as the top-level one) until the user picks "< Back" or
+	quits, at which point control returns to run_launcher()'s own loop,
+	redrawing the top menu -- not the whole launcher exiting.
 	"""
-	from .utilities import configure_board, flash_firmware, flash_micropython
+	from .utilities import configure_board, flash_firmware, flash_micropython, wipe_device
 	from rich.prompt import Confirm
 
 	MICROPYTHON_UTILITIES = {
 		"flash_mpy": flash_micropython.flash,
 		"flash_firmware": flash_firmware.flash,
 		"configure_board": configure_board.configure,
+		"wipe_device": wipe_device.wipe,
 	}
 
 	while True:
