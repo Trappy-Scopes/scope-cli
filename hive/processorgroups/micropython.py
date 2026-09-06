@@ -65,6 +65,8 @@ class SerialMPDevice(MicropythonDevice):
 		self.search_name = search_name
 		if self.connect_ == "autoconnect":
 			self.auto_connect()
+			if not self.connected:
+				log.error(f"SerialMPDevice construction failed: {name}")
 
 		if self.connected:
 			if exec_main:
@@ -72,8 +74,6 @@ class SerialMPDevice(MicropythonDevice):
 
 			if handshake:
 				self.handshake()
-		else:
-			log.error(f"SerialMPDevice construction failed: {name}")
 
 	# ---------- Serial utilities ------------------
 	def all_ports():
@@ -119,12 +119,22 @@ class SerialMPDevice(MicropythonDevice):
 			self.connected = True
 			log.debug(f"Connected to port: {self.port}")
 			self.device.enter_raw_repl()
-			self.board_name = self.device.exec_("import board")
-			self.board_name = self.exec_cleanup("board.name")
-			log.debug(f"Board name: {self.board_name}")
 		except Exception as e:
 			log.debug(f"Connection failed - {port}!")
 			log.error(e)
+			return
+
+		## board.name is informational (used for auto_connect()'s optional
+		## search_name matching) -- not defining it is a valid board.py, not
+		## a connection failure, so this is its own try/except: the port is
+		## connected and usable either way.
+		try:
+			self.device.exec_("import board")
+			self.board_name = self.exec_cleanup("board.name")
+			log.debug(f"Board name: {self.board_name}")
+		except Exception as e:
+			log.debug(f"Could not read board.name on {port}: {e}")
+			self.board_name = None
 
 	def disconnect(self):
 		self.device.exit_raw_repl()
