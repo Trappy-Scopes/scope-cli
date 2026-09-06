@@ -210,9 +210,33 @@ def _left_pad_lines(text, pad):
 	return padded
 
 
-def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_line=None):
-	t = elapsed % dance.DURATION
-	animation = Text.from_ansi(dance.render(dance.frame(t, border=False)), no_wrap=True)
+def _renderable_to_text(renderable, width):
+	"""
+	Render any Rich renderable (e.g. a Table) to a plain multi-line Text --
+	the left-padding trick _render() uses to centre the chlamy animation
+	only works on a Text (split("\\n") + append_text), not an arbitrary
+	renderable, so this is the conversion step for anything passed as
+	_show_menu()'s `content` in place of the animation. force_terminal=True
+	is what makes capture() actually emit ANSI codes instead of stripping
+	them (verified directly: without it, a captured Table's own styling --
+	e.g. a colored column -- is lost).
+	"""
+	capture_console = Console(width=width, force_terminal=True, no_color=False)
+	with capture_console.capture() as cap:
+		capture_console.print(renderable)
+	return Text.from_ansi(cap.get().rstrip("\n"))
+
+
+def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_line=None, content=None):
+	if content is not None:
+		## Replaces the animation entirely -- e.g. the repository picker's
+		## status table -- rather than showing both. Centred the same way,
+		## by the same code below; only where the block's own width comes
+		## from differs.
+		animation = content
+	else:
+		t = elapsed % dance.DURATION
+		animation = Text.from_ansi(dance.render(dance.frame(t, border=False)), no_wrap=True)
 
 	title = Text("Trappy-Scopes launcher", style="bold", justify="center")
 	header = [title]
@@ -284,7 +308,12 @@ def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_li
 	## console width, verified to work with no Align wrapper at all): since
 	## the manually-centered block's own midpoint is put at console_width/2
 	## by construction, both approaches land on the same centerline.
-	content_width = max(dance.W, row_width)
+	## The animation's own width is computed rather than assumed as
+	## dance.W, so an arbitrary `content` (a table, say) centres by
+	## exactly the same rule -- its own widest rendered line -- with no
+	## special-casing needed here for which one is actually showing.
+	animation_width = max((len(line) for line in animation.plain.split("\n")), default=0)
+	content_width = max(animation_width, row_width)
 	pad = max(0, (console_width - content_width) // 2)
 
 	animation = _left_pad_lines(animation, pad)
@@ -299,7 +328,7 @@ def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_li
 	return Group(*body)
 
 
-def _show_menu(items=None, extra_line=None):
+def _show_menu(items=None, extra_line=None, content=None):
 	"""
 	Run the animated menu until a selection is made ('enter') or the user
 	quits ('q'/bare Escape). Returns the chosen key, or None if quit.
@@ -309,6 +338,10 @@ def _show_menu(items=None, extra_line=None):
 	this is the whole submenu mechanism, no separate rendering path needed.
 	`extra_line` is an optional Text shown under the version/venv lines --
 	the MicroPython submenu uses it to show the currently selected device.
+	`content`, if given, replaces the chlamy animation entirely -- the
+	repository picker uses this to show its status table centred in the
+	same place the animation would otherwise be, rather than printing it
+	separately above an unrelated animation (see _renderable_to_text()).
 
 	Recomputes the version line fresh on every call rather than once for
 	the whole launcher session: a micro-utility run in between (repository
@@ -326,14 +359,14 @@ def _show_menu(items=None, extra_line=None):
 	old_settings = termios.tcgetattr(fd)
 	try:
 		tty.setcbreak(fd)
-		with Live(_render(menu, 0, console.width, version, venv_line, extra_line), console=console, screen=False,
+		with Live(_render(menu, 0, console.width, version, venv_line, extra_line, content), console=console, screen=False,
 				  auto_refresh=False, transient=True) as live:
 			while True:
 				## console.width read fresh every frame, not cached from
 				## before the loop started -- a resized terminal window
 				## must recentre on the next frame, not stay centered for
 				## whatever size the window happened to be at launch.
-				live.update(_render(menu, time.monotonic() - start, console.width, version, venv_line, extra_line),
+				live.update(_render(menu, time.monotonic() - start, console.width, version, venv_line, extra_line, content),
 							refresh=True)
 
 				ready, _, _ = select.select([fd], [], [], 1 / FPS)
@@ -481,17 +514,19 @@ def _show_configuration_menu():
 
 def _show_repo_menu():
 	"""
-	The "Repository utility >" submenu -- prints the status table, then
-	an animated menu (same _show_menu() mechanism as MicroPython/
-	Configuration) to pick ONE repo to pull. Repos come from
-	repo_sync.all_repos() every time this redraws (not a static item
-	list, unlike MicroPython/Configuration's fixed menus), which now
-	includes trappyscopes' own repo alongside config.git_dependencies --
-	previously the one repo this tool had no update option for at all.
+	The "Repository utility >" submenu -- shows the status table centred
+	in place of the animation (see _render()'s `content` parameter and
+	_renderable_to_text()), with a menu below it to pick ONE repo to
+	pull -- no separate animation, and no disconnected plain-printed
+	table above an unrelated menu. Repos come from repo_sync.all_repos()
+	every time this redraws (not a static item list, unlike MicroPython/
+	Configuration's fixed menus), which now includes trappyscopes' own
+	repo alongside config.git_dependencies -- previously the one repo
+	this tool had no update option for at all.
 
-	Pulling re-prints an updated table before the menu appears again,
-	rather than pulling everything behind at once with no way to see
-	what actually changed afterward.
+	Pulling redraws with a freshly rebuilt table before the menu appears
+	again, rather than pulling everything behind at once with no way to
+	see what actually changed afterward.
 	"""
 	from .utilities import repo_sync
 	from rich.console import Console
@@ -505,10 +540,10 @@ def _show_repo_menu():
 			console.print("[yellow]No repositories declared in config.git_dependencies.[/yellow]")
 			return
 		table, statuses = repo_sync.status_table(repos)
-		console.print(table)
+		table_text = _renderable_to_text(table, console.width)
 
 		items = [(label, label) for label in repos] + [("back", "< Back")]
-		choice = _show_menu(items)
+		choice = _show_menu(items, content=table_text)
 
 		if choice is None or choice == "back":
 			return
