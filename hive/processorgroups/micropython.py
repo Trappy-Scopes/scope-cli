@@ -28,8 +28,19 @@ class MicropythonDevice(AbstractProcessorGroup):
 		pass
 
 	def __del__(self):
+		## disconnect() clears self.device once the port is actually closed
+		## (see SerialMPDevice.disconnect()) -- this only still fires for a
+		## device that was never explicitly disconnected, so the port may
+		## genuinely already be gone by the time garbage collection gets
+		## here. Best-effort only: there's no one left to report a failure
+		## to from inside __del__, so swallow it rather than let Python
+		## print a traceback for a cleanup step that was never guaranteed
+		## to run at a useful time in the first place.
 		if self.device:
-			self.device.exit_raw_repl()
+			try:
+				self.device.exit_raw_repl()
+			except Exception:
+				pass
 
 	def __call__(self, command):
 		raise Exception("Method not defined!")
@@ -139,6 +150,14 @@ class SerialMPDevice(MicropythonDevice):
 	def disconnect(self):
 		self.device.exit_raw_repl()
 		self.device.close()
+		## Cleared so __del__'s `if self.device:` guard sees nothing left to
+		## close -- without this, __del__ still finds the (now-closed)
+		## Pyboard object truthy later and tries to exit_raw_repl() a port
+		## that's already shut, raising PortNotOpenError at garbage-
+		## collection time. This was the actual bug; __del__'s own
+		## try/except is only a backstop for a device that was never
+		## disconnect()'d at all.
+		self.device = None
 		if self.port in SerialMPDevice.exclusion_list:
 			SerialMPDevice.exclusion_list.remove(self.port)
 
