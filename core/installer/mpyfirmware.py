@@ -132,6 +132,68 @@ def _flash_with_picotool(image_path, console, dry_run=False):
     return True
 
 
+def _firmware_cache_dir():
+    cache_dir = os.path.join(os.path.expanduser("~"), "trappyverse", "state", "firmware_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+
+def _download_firmware(url, console, dry_run=False):
+    """
+    Download a firmware image into the local cache, if it isn't there
+    already. The cache key is just the URL's own filename -- for
+    micropython.org's own downloads that already encodes the version and
+    build date (e.g. RPI_PICO_W-20230426-v1.20.0.uf2), so re-running this
+    against the same URL reuses the cached file rather than re-fetching.
+
+    Never silent: a real download only happens after an explicit
+    confirmation -- same rule as the Miniforge installer in
+    core/installer/environment.py -- since this then gets flashed onto
+    real hardware, a worse failure mode than a bad software install if
+    the download were ever wrong or corrupted.
+    """
+    filename = os.path.basename(url.split("?")[0])
+    cached_path = os.path.join(_firmware_cache_dir(), filename)
+
+    if os.path.isfile(cached_path):
+        console.print(f"[dim]Using cached firmware: {cached_path}[/dim]")
+        return cached_path
+
+    console.print(f"Firmware image not cached locally: {url}")
+    if not Confirm.ask("Download this firmware image?", default=False):
+        return None
+
+    if dry_run:
+        console.print(f"[dim]Dry run -- would download to {cached_path}[/dim]")
+        return cached_path
+
+    import requests
+    tmp_path = cached_path + ".part"
+    try:
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
+        with open(tmp_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        os.rename(tmp_path, cached_path)
+        console.print(f"[green]Downloaded to {cached_path}[/green]")
+        return cached_path
+    except requests.RequestException as e:
+        console.print(f"[red]Download failed: {e}[/red]")
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        return None
+
+
+def _resolve_firmware_image(image_path, console, dry_run=False):
+    """A local path passes through unchanged; a URL is downloaded (once,
+    cached) via _download_firmware(). Returns None if a download was
+    needed and declined or failed."""
+    if image_path.startswith(("http://", "https://")):
+        return _download_firmware(image_path, console, dry_run=dry_run)
+    return os.path.expanduser(image_path)
+
+
 def flash(console=None, dry_run=False):
     """
     Flash config.micropython.firmware_image onto a device, skipping it if
@@ -151,10 +213,6 @@ def flash(console=None, dry_run=False):
         console.print("[red]config.micropython.firmware_image is not set -- "
                        "nothing to flash.[/red]")
         return
-    if not os.path.isfile(os.path.expanduser(image_path)):
-        console.print(f"[red]firmware_image does not exist: {image_path}[/red]")
-        return
-    image_path = os.path.expanduser(image_path)
 
     candidates = devicetree.micropython_candidates()
     port = None
@@ -169,6 +227,14 @@ def flash(console=None, dry_run=False):
                 console.print(f"[green]{port} already reports MicroPython "
                                f"{locked_version} -- nothing to do.[/green]")
                 return
+
+    ## Resolved (and, if it's a URL, downloaded) only now -- after the
+    ## skip-if-already-current check -- so a device that turns out not to
+    ## need flashing never costs a download.
+    image_path = _resolve_firmware_image(image_path, console, dry_run=dry_run)
+    if not image_path or not (dry_run or os.path.isfile(image_path)):
+        console.print("[red]No firmware image available -- nothing to flash.[/red]")
+        return
 
     if port:
         console.print(f"Resetting {port} into bootloader mode ...")
