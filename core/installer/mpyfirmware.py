@@ -409,7 +409,16 @@ def sync(console=None, dry_run=False, port=None):
             if os.path.isfile(local_source):
                 console.print(f"Copying {local_source} -> {device_dest} ...")
                 if not dry_run:
-                    device.device.fs_put(local_source, device_dest.lstrip("/"))
+                    try:
+                        device.device.fs_put(local_source, device_dest.lstrip("/"))
+                    except Exception as e:
+                        ## Matches sync_files()'s own per-file resilience ("one
+                        ## unwritable file must not abandon the rest of the
+                        ## tree half-copied") -- this fs_put() call had none of
+                        ## that, and a real ENOSPC here crashed the entire
+                        ## launcher process uncaught. Confirmed happening for
+                        ## real this session, not speculative.
+                        console.print(f"[red]FAILED {device_dest}: {e}[/red]")
                 continue
             if not os.path.isdir(local_source):
                 console.print(f"[red]sync_what.yaml names a path that doesn't "
