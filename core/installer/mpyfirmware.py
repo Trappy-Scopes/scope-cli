@@ -406,24 +406,16 @@ def sync(console=None, dry_run=False, port=None):
     original = (SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES)
     try:
         for local_source, device_dest in roots:
-            if os.path.isfile(local_source):
-                console.print(f"Copying {local_source} -> {device_dest} ...")
-                if not dry_run:
-                    try:
-                        device.device.fs_put(local_source, device_dest.lstrip("/"))
-                    except Exception as e:
-                        ## Matches sync_files()'s own per-file resilience ("one
-                        ## unwritable file must not abandon the rest of the
-                        ## tree half-copied") -- this fs_put() call had none of
-                        ## that, and a real ENOSPC here crashed the entire
-                        ## launcher process uncaught. Confirmed happening for
-                        ## real this session, not speculative.
-                        console.print(f"[red]FAILED {device_dest}: {e}[/red]")
-                continue
-            if not os.path.isdir(local_source):
+            if not os.path.isfile(local_source) and not os.path.isdir(local_source):
                 console.print(f"[red]sync_what.yaml names a path that doesn't "
                                f"exist: {local_source}[/red]")
                 continue
+            ## sync_files() itself now handles a single-file local_source
+            ## (used for a file-type include: entry like boot.py) as well
+            ## as a directory -- same skip_unchanged/resilience/reporting
+            ## either way, so no separate fs_put() branch is needed here.
+            ## _resolve_excludes() is a no-op for a file (os.walk() on a
+            ## non-directory yields nothing), harmless to call regardless.
             skip_dirs, skip_files = _resolve_excludes(local_source, manifest)
             SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES = skip_dirs, skip_files
             device.sync_files(local_source, device_dest, dry_run=dry_run, verbose=True)

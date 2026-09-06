@@ -260,9 +260,51 @@ class SerialMPDevice(MicropythonDevice):
 		except Exception:
 			return False
 
+	def _sync_one_file(self, local_path, remote_path, sent, skipped, failed,
+						skip_unchanged=True, dry_run=False, verbose=True):
+		"""
+		Copy exactly one file to exactly one destination path, appending to
+		the caller's sent/skipped/failed lists. The shared per-file logic
+		behind both sync_files()'s directory walk and its single-file
+		shortcut -- same skip_unchanged check, same "one bad file doesn't
+		abandon the rest" resilience, same reporting, whichever calls it.
+		"""
+		if skip_unchanged and not dry_run:
+			try:
+				st = self.device.fs_stat(remote_path)
+				if st and st[6] == os.path.getsize(local_path):
+					skipped.append(remote_path)
+					return
+			except Exception:
+				pass          ## not there yet, or no stat -- just send it
+
+		if dry_run:
+			sent.append(remote_path)
+			return
+		try:
+			self.device.fs_put(local_path, remote_path)
+			sent.append(remote_path)
+			if verbose:
+				print(f"  [green]sent[/] {remote_path}")
+		except Exception as err:
+			## Keep going. One unwritable file must not abandon the rest
+			## of the tree half-copied.
+			failed.append((remote_path, str(err)))
+			log.error(f"sync failed for {remote_path}: {err}")
+			if verbose:
+				print(f"  [red]FAILED[/] {remote_path}: {err}")
+
 	def sync_files(self, local_folder, target_folder, skip_unchanged=True,
 					dry_run=False, verbose=True):
-		"""Copy a local tree onto the device, creating directories as needed.
+		"""Copy a local tree onto the device, creating directories as needed --
+		or, when local_folder is a single file rather than a directory, copy
+		just that one file to target_folder (the exact destination path, not
+		a folder to nest it into). Same skip_unchanged/resilience/reporting
+		either way, via _sync_one_file() -- this is what a single-file entry
+		in sync_what.yaml's include: should go through, rather than a
+		hand-rolled fs_put() call with none of this method's guarantees
+		(exactly the gap that let an ENOSPC crash the whole launcher process
+		uncaught, before this).
 
 		Returns a summary dict; the caller can tell success from failure, which
 		the old version could not -- it caught every exception, aborted the whole
@@ -274,56 +316,37 @@ class SerialMPDevice(MicropythonDevice):
 		"""
 		sent, skipped, failed, made = [], [], [], []
 
-		for root, dirs, files in os.walk(local_folder):
-			## prune junk in place so os.walk does not descend into it
-			dirs[:] = [d for d in dirs if d not in SerialMPDevice.SKIP_DIRS
-						and not d.startswith(".")]
+		if os.path.isfile(local_folder):
+			self._sync_one_file(local_folder, target_folder.strip("/"), sent, skipped, failed,
+									skip_unchanged=skip_unchanged, dry_run=dry_run, verbose=verbose)
+		else:
+			for root, dirs, files in os.walk(local_folder):
+				## prune junk in place so os.walk does not descend into it
+				dirs[:] = [d for d in dirs if d not in SerialMPDevice.SKIP_DIRS
+							and not d.startswith(".")]
 
-			rel = os.path.relpath(root, local_folder)
-			if rel == ".":
-				remote_root = target_folder.strip("/")
-			else:
-				remote_root = "/".join([target_folder.strip("/")] +
-										rel.replace("\\", "/").split("/"))
+				rel = os.path.relpath(root, local_folder)
+				if rel == ".":
+					remote_root = target_folder.strip("/")
+				else:
+					remote_root = "/".join([target_folder.strip("/")] +
+											rel.replace("\\", "/").split("/"))
 
-			wanted = [f for f in files
-						if not f.startswith(".")
-						and not f.endswith(".pyc")
-						and f not in SerialMPDevice.SKIP_FILES]
-			if not wanted:
-				continue
-
-			if not dry_run:
-				made += self.fs_makedirs(remote_root)
-
-			for file_name in wanted:
-				local_path = os.path.join(root, file_name)
-				remote_path = f"{remote_root}/{file_name}"
-
-				if skip_unchanged and not dry_run:
-					try:
-						st = self.device.fs_stat(remote_path)
-						if st and st[6] == os.path.getsize(local_path):
-							skipped.append(remote_path)
-							continue
-					except Exception:
-						pass          ## not there yet, or no stat -- just send it
-
-				if dry_run:
-					sent.append(remote_path)
+				wanted = [f for f in files
+							if not f.startswith(".")
+							and not f.endswith(".pyc")
+							and f not in SerialMPDevice.SKIP_FILES]
+				if not wanted:
 					continue
-				try:
-					self.device.fs_put(local_path, remote_path)
-					sent.append(remote_path)
-					if verbose:
-						print(f"  [green]sent[/] {remote_path}")
-				except Exception as err:
-					## Keep going. One unwritable file must not abandon the rest
-					## of the tree half-copied.
-					failed.append((remote_path, str(err)))
-					log.error(f"sync failed for {remote_path}: {err}")
-					if verbose:
-						print(f"  [red]FAILED[/] {remote_path}: {err}")
+
+				if not dry_run:
+					made += self.fs_makedirs(remote_root)
+
+				for file_name in wanted:
+					local_path = os.path.join(root, file_name)
+					remote_path = f"{remote_root}/{file_name}"
+					self._sync_one_file(local_path, remote_path, sent, skipped, failed,
+											skip_unchanged=skip_unchanged, dry_run=dry_run, verbose=verbose)
 
 		summary = {"sent": sent, "skipped": skipped, "failed": failed,
 					"dirs_created": made, "dry_run": dry_run}
