@@ -339,15 +339,28 @@ def _resolve_excludes(root, manifest):
     return skip_dirs, skip_files
 
 
+_RUN_MAIN_SCRIPT = "exec(open('pico_firmware/main.py').read())"
+
+
 def sync(console=None, dry_run=False):
     """
     Sync config.micropython.firmware_dir onto a device via
     SerialMPDevice.sync_files() -- incremental (skip_unchanged), so this
-    works for both a fresh device (auto-bootstraps board.py and blinks,
-    per pico_firmware/main.py) and updating one already running it. What
-    actually gets synced -- the whole repo root, or just specific named
-    subdirectories -- and what's excluded within that, both come from the
-    repo's own sync_what.yaml (see _sync_roots()/_resolve_excludes()).
+    works for both a fresh device and updating one already running it.
+    What actually gets synced -- the whole repo root, or just specific
+    named subdirectories/files -- and what's excluded within that, both
+    come from the repo's own sync_what.yaml (see _sync_roots()/
+    _resolve_excludes()). An 'include' entry that names a file (e.g.
+    boot.py) rather than a directory is sent directly via fs_put --
+    sync_files() itself only ever walks a directory tree.
+
+    Once everything is copied, pico_firmware/main.py is executed over the
+    same connection (not a device reset -- keeps the connection usable,
+    and matches configure_board.py's own regenerate-board.py mechanism).
+    This is what actually emits board.py/boot.py/webrepl_cfg.py/vault the
+    first time they're missing, and re-initialises whatever circuit_id is
+    currently configured either way -- effectively the same verification
+    step as a reboot, without losing the connection to see the result.
     """
     from hive.processorgroups.micropython import SerialMPDevice
 
@@ -378,13 +391,28 @@ def sync(console=None, dry_run=False):
     original = (SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES)
     try:
         for local_source, device_dest in roots:
+            if os.path.isfile(local_source):
+                console.print(f"Copying {local_source} -> {device_dest} ...")
+                if not dry_run:
+                    device.device.fs_put(local_source, device_dest.lstrip("/"))
+                continue
             if not os.path.isdir(local_source):
-                console.print(f"[red]sync_what.yaml names a subdirectory that "
-                               f"doesn't exist: {local_source}[/red]")
+                console.print(f"[red]sync_what.yaml names a path that doesn't "
+                               f"exist: {local_source}[/red]")
                 continue
             skip_dirs, skip_files = _resolve_excludes(local_source, manifest)
             SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES = skip_dirs, skip_files
             device.sync_files(local_source, device_dest, dry_run=dry_run, verbose=True)
+
+        if dry_run:
+            console.print(f"[dim]Dry run -- would run {_RUN_MAIN_SCRIPT}[/dim]")
+        else:
+            console.print("Completing configuration (running pico_firmware/main.py) ...")
+            try:
+                device.device.exec_(_RUN_MAIN_SCRIPT)
+                console.print("[green]Configuration complete.[/green]")
+            except Exception as e:
+                console.print(f"[red]Running pico_firmware/main.py failed: {e}[/red]")
     finally:
         SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES = original
         device.disconnect()
