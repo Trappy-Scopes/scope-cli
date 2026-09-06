@@ -46,12 +46,20 @@ MENU_ITEMS = [
 	("repos", "Repository utility"),
 	("devicetree", "Device tree"),
 	("register", "Register device"),
+	("micropython", "MicroPython >"),
 	## Restored: core/installer/installer.py now uses `pip install -e .`,
 	## the bug that broke a dev's editable install is fixed.
 	("install", "Install / setup"),
 	("intro", "Show the introduction"),
 	("edit", "Edit the configuration file"),
 	("exit", "Exit"),
+]
+
+MICROPYTHON_MENU_ITEMS = [
+	("flash_mpy", "Flash MicroPython"),
+	("flash_firmware", "Flash firmware"),
+	("configure_board", "Configure board"),
+	("back", "< Back"),
 ]
 
 
@@ -282,17 +290,21 @@ def _render(menu, elapsed, console_width, version=None, venv_line=None):
 	return Group(*body)
 
 
-def _show_menu():
+def _show_menu(items=None):
 	"""
 	Run the animated menu until a selection is made ('enter') or the user
 	quits ('q'/bare Escape). Returns the chosen key, or None if quit.
+
+	`items` defaults to the top-level MENU_ITEMS; passing MICROPYTHON_MENU_ITEMS
+	(or any other list) renders the exact same animated menu one level deeper --
+	this is the whole submenu mechanism, no separate rendering path needed.
 
 	Recomputes the version line fresh on every call rather than once for
 	the whole launcher session: a micro-utility run in between (repository
 	sync in particular) can change this repo's HEAD, and a stale cached
 	commit would then be wrong the next time the menu shows.
 	"""
-	menu = Menu(MENU_ITEMS)
+	menu = Menu(items if items is not None else MENU_ITEMS)
 	console = Console()
 	choice = None
 	start = time.monotonic()
@@ -345,6 +357,35 @@ def _show_menu():
 	return choice
 
 
+def _show_micropython_menu():
+	"""
+	The "MicroPython >" submenu -- Flash MicroPython / Flash firmware /
+	Configure board. Runs its own loop (same return-to-menu-or-leave prompt
+	as the top-level one) until the user picks "< Back" or quits, at which
+	point control returns to run_launcher()'s own loop, redrawing the top
+	menu -- not the whole launcher exiting.
+	"""
+	from .utilities import configure_board, flash_firmware, flash_micropython
+	from rich.prompt import Confirm
+
+	MICROPYTHON_UTILITIES = {
+		"flash_mpy": flash_micropython.flash,
+		"flash_firmware": flash_firmware.flash,
+		"configure_board": configure_board.configure,
+	}
+
+	while True:
+		choice = _show_menu(MICROPYTHON_MENU_ITEMS)
+
+		if choice is None or choice == "back":
+			return
+
+		MICROPYTHON_UTILITIES[choice]()
+
+		if not Confirm.ask("\nReturn to the MicroPython menu?", default=True):
+			return
+
+
 def run_launcher():
 	"""
 	Show the animated menu and run whichever action was chosen, looping
@@ -356,7 +397,10 @@ def run_launcher():
 	For every other ("micro-utility") action, the utility runs to
 	completion showing its own output, then a plain yes/no prompt asks
 	whether to return to the menu or leave -- the launcher keeps running
-	until the user explicitly does one or the other.
+	until the user explicitly does one or the other. "MicroPython >" is the
+	one exception: it opens its own submenu (_show_micropython_menu()) and,
+	on return, goes straight back to this loop -- no extra "return to menu?"
+	prompt on top of the submenu's own.
 	"""
 	from .utilities import (check_config, device_tree, edit_config, installer,
 							 intro, launch_normally, register_device, repo_sync,
@@ -381,6 +425,9 @@ def run_launcher():
 		if choice == "launch":
 			launch_normally.run()
 			return
+		if choice == "micropython":
+			_show_micropython_menu()
+			continue
 
 		MICRO_UTILITIES[choice]()
 

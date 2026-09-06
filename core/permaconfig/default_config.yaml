@@ -64,7 +64,15 @@ config:
                                  # `raw`: constructs the ScopeAssembly and nothing else, near-silently.
                                  # Also accepts a dotted path to any module exposing `build(config)`.
                                  # See `expenv/__init__.py`. The legacy value `core.startup` still maps to `freestyle`.
-  startup_scripts: []            # Scripts to run by default when the CLI is started.   
+  startup_scripts: []            # Scripts to run by default when the CLI is started.
+  micropython:                   # MicroPython device management (launcher's "MicroPython" submenu)
+    version:                     # Locked/supported MicroPython version, e.g. "1.20.0" -- a
+                                  # device already at this version is skipped when flashing.
+    firmware_image:              # Local path to that version's .uf2 firmware image.
+    firmware_dir:                 # Local path to the pico_firmware repo's ROOT (not a
+                                  # subfolder inside it) -- mirrored onto a device's own
+                                  # filesystem root, filtered by that repo's own
+                                  # sync_what.yaml if it declares one.
 
 ## Experiment configuration options
 Experiment:

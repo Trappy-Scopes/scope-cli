@@ -1,0 +1,90 @@
+"""
+"Configure board" menu item: pull the device's current board.py, let the
+user edit it in their own editor, push it back. Deliberately not "prompt
+for name/circuit_id and build the file" -- the user edits the real file
+directly (same pattern as edit_config.py's config.terminal_editor), so
+nothing about board.py's own format has to be reproduced or kept in sync
+here.
+
+Prints the known circuit list as a reference (files under
+config.micropython.firmware_dir's circuits/, plus the two circuit_ids
+hardcoded inline in pico_firmware/main.py rather than backed by a file) --
+but circuit_id is never validated against it. Get it wrong and the device
+will say so on boot ("Undefined circuit!"), same as it always did.
+"""
+
+import os
+import tempfile
+
+from rich.console import Console
+
+from core.external import pyboard
+from core.installer import mpyfirmware
+from core.permaconfig.config import TrappyConfig
+from .edit_config import pick_editor
+
+_INLINE_CIRCUIT_IDS = ("idle_device_that_blinks", "4_clustcontrol_v1_proto")
+
+
+def _known_circuits():
+    cfg = (TrappyConfig().get().get("config") or {}).get("micropython") or {}
+    firmware_dir = cfg.get("firmware_dir")
+    circuits = list(_INLINE_CIRCUIT_IDS)
+    if firmware_dir:
+        circuits_dir = os.path.join(os.path.expanduser(firmware_dir), "pico_firmware", "circuits")
+        if os.path.isdir(circuits_dir):
+            circuits += sorted(
+                name[:-3] for name in os.listdir(circuits_dir)
+                if name.endswith(".py")
+            )
+    return circuits
+
+
+def configure(console=None):
+    console = console or Console()
+
+    chosen = mpyfirmware.pick_device(console)
+    if chosen is None:
+        return
+
+    circuits = _known_circuits()
+    if circuits:
+        console.print("[bold]Known circuit_ids:[/bold] " + ", ".join(circuits))
+
+    board_ = None
+    local_path = None
+    try:
+        board_ = pyboard.Pyboard(chosen.device, 115200)
+        board_.enter_raw_repl()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix="_board.py", delete=False) as f:
+            local_path = f.name
+
+        if board_.fs_exists("board.py"):
+            board_.fs_get("board.py", local_path)
+        else:
+            console.print("[yellow]No board.py on the device yet -- "
+                           "starting from an empty file.[/yellow]")
+
+        os.system(f'{pick_editor()} "{local_path}"')
+
+        board_.fs_put(local_path, "board.py")
+        console.print(f"[green]board.py updated on {chosen.device}.[/green]")
+    except Exception as e:
+        console.print(f"[red]Configure board failed: {e}[/red]")
+    finally:
+        if board_ is not None:
+            try:
+                board_.exit_raw_repl()
+            except Exception:
+                pass
+            try:
+                board_.close()
+            except Exception:
+                pass
+        if local_path and os.path.exists(local_path):
+            os.remove(local_path)
+
+
+if __name__ == "__main__":
+    configure()

@@ -11,7 +11,7 @@ import shutil
 from core.permaconfig.config import TrappyConfig
 
 
-def _pick_editor(config=None):
+def pick_editor(config=None):
 	if config is None:
 		config = TrappyConfig().get()
 	preferred = (config.get("config") or {}).get("terminal_editor")
@@ -31,7 +31,7 @@ def edit():
 	if path is None:
 		print("No trappyconfig.yaml found -- run with --new_config first.")
 		return
-	os.system(f'{_pick_editor()} "{path}"')
+	os.system(f'{pick_editor()} "{path}"')
 
 
 if __name__ == "__main__":

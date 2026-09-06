@@ -119,7 +119,7 @@ class SerialMPDevice(MicropythonDevice):
 			self.connected = True
 			log.debug(f"Connected to port: {self.port}")
 			self.device.enter_raw_repl()
-			self.board_name = self.device.exec("import board")
+			self.board_name = self.device.exec_("import board")
 			self.board_name = self.exec_cleanup("board.name")
 			log.debug(f"Board name: {self.board_name}")
 		except Exception as e:
@@ -195,7 +195,7 @@ class SerialMPDevice(MicropythonDevice):
 	def __call__(self, command):
 		log.debug(f"{self.name} << {command}")
 		printed =  'print(' + str(command).replace('\'', '\"') + ')'
-		ret = self.device.exec(printed)
+		ret = self.device.exec_(printed)
 		log.debug(f"{self.name} >> {ret.decode()}")
 		return resolve_type(ret.decode().strip("\r\nNone").strip("\r\n"))
 
