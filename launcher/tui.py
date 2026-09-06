@@ -369,6 +369,11 @@ def _select_device():
 	everything else -- reuses _show_menu() with a synthesized item list,
 	rather than a plain numbered prompt. Returns a port string, or None if
 	there's nothing to pick from, or the user backs out.
+
+	Exactly one candidate auto-picks with no menu shown at all -- same
+	"nothing to actually choose" rule core.installer.mpyfirmware.
+	pick_device() already uses, so a single-device setup never has to
+	click through a one-item picker just to confirm the obvious choice.
 	"""
 	from core.idioms import devicetree
 
@@ -376,6 +381,8 @@ def _select_device():
 	if not candidates:
 		Console().print("[dim]No MicroPython-looking serial devices found.[/dim]")
 		return None
+	if len(candidates) == 1:
+		return candidates[0].device
 	items = [(p.device, p.device + (f" ({p.serial_number})" if p.serial_number else ""))
 			 for p in candidates]
 	items.append(("_cancel", "< Cancel"))
@@ -399,14 +406,18 @@ def _show_micropython_menu():
 	run_launcher()'s own loop, redrawing the top menu -- not the whole
 	launcher exiting.
 
-	The selected device (a port string, or None) is remembered for as
-	long as this submenu stays open and passed to every action below --
-	pick it once, use it for several actions in a row, instead of being
-	asked again each time. Each action still falls back to its own picker
-	if nothing was selected here, or if the selected port is no longer
-	connected (core.installer.mpyfirmware.pick_device()'s `preselected`
-	handling covers that).
+	The selected device (a port string, or None) is auto-filled on entry
+	when there's exactly one candidate (no separate picker screen for
+	that -- straight to this menu with "Device: ..." already showing it),
+	and remembered for as long as this submenu stays open, passed to
+	every action below -- pick it once (or have it auto-picked), use it
+	for several actions in a row, instead of being asked again each time.
+	Each action still falls back to its own picker if nothing was selected
+	here, or if the selected port is no longer connected
+	(core.installer.mpyfirmware.pick_device()'s `preselected` handling
+	covers that).
 	"""
+	from core.idioms import devicetree
 	from .utilities import configure_board, flash_firmware, flash_micropython, wipe_device
 	from rich.prompt import Confirm
 
@@ -417,7 +428,13 @@ def _show_micropython_menu():
 		"wipe_device": wipe_device.wipe,
 	}
 
-	selected_port = None
+	## Auto-selected when it's unambiguous (exactly one candidate) -- no
+	## separate picker screen shown for that, straight to this menu with
+	## the device already filled in. Left unselected for zero or several
+	## candidates: nothing to safely guess there, "Select device" still
+	## picks it explicitly either way.
+	candidates = devicetree.micropython_candidates()
+	selected_port = candidates[0].device if len(candidates) == 1 else None
 
 	while True:
 		choice = _show_menu(MICROPYTHON_MENU_ITEMS, extra_line=_device_line(selected_port))
