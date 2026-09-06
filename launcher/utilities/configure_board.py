@@ -16,28 +16,45 @@ will say so on boot ("Undefined circuit!"), same as it always did.
 import os
 import tempfile
 
+from rich.columns import Columns
 from rich.console import Console
+from rich.text import Text
 
 from core.external import pyboard
 from core.installer import mpyfirmware
 from core.permaconfig.config import TrappyConfig
 from .edit_config import pick_editor
 
+## Not backed by a file in circuits/ -- handled inline in pico_firmware/main.py
+## itself (see core/installer/mpyfirmware.py's own docstring for the same note).
 _INLINE_CIRCUIT_IDS = ("idle_device_that_blinks", "4_clustcontrol_v1_proto")
 
 
 def _known_circuits():
+    """(circuit_id, is_inline) pairs -- file-backed ones (in circuits/) first,
+    then the two hardcoded-in-main.py ones, each sorted within its own group."""
     cfg = (TrappyConfig().get().get("config") or {}).get("micropython") or {}
     firmware_dir = cfg.get("firmware_dir")
-    circuits = list(_INLINE_CIRCUIT_IDS)
+    file_backed = []
     if firmware_dir:
         circuits_dir = os.path.join(os.path.expanduser(firmware_dir), "pico_firmware", "circuits")
         if os.path.isdir(circuits_dir):
-            circuits += sorted(
+            file_backed = sorted(
                 name[:-3] for name in os.listdir(circuits_dir)
                 if name.endswith(".py")
             )
-    return circuits
+    return [(c, False) for c in file_backed] + [(c, True) for c in sorted(_INLINE_CIRCUIT_IDS)]
+
+
+def _print_known_circuits(console, circuits):
+    if not circuits:
+        return
+    console.print("[bold]Known circuit_ids:[/bold]")
+    entries = [
+        Text(f"• {name}" + (" (inline)" if inline else ""), style="dim" if inline else None)
+        for name, inline in circuits
+    ]
+    console.print(Columns(entries, padding=(0, 3), equal=False))
 
 
 def configure(console=None):
@@ -47,9 +64,7 @@ def configure(console=None):
     if chosen is None:
         return
 
-    circuits = _known_circuits()
-    if circuits:
-        console.print("[bold]Known circuit_ids:[/bold] " + ", ".join(circuits))
+    _print_known_circuits(console, _known_circuits())
 
     board_ = None
     local_path = None
