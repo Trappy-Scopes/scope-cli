@@ -5,9 +5,9 @@ core.installer.environment.
 """
 
 
-def flash():
+def flash(port=None):
 	from core.installer import mpyfirmware
-	mpyfirmware.flash()
+	mpyfirmware.flash(port=port)
 
 
 if __name__ == "__main__":

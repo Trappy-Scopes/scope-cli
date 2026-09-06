@@ -56,6 +56,7 @@ MENU_ITEMS = [
 ]
 
 MICROPYTHON_MENU_ITEMS = [
+	("select_device", "Select device"),
 	("flash_mpy", "Flash MicroPython"),
 	("flash_firmware", "Flash firmware"),
 	("configure_board", "Configure board"),
@@ -204,7 +205,7 @@ def _left_pad_lines(text, pad):
 	return padded
 
 
-def _render(menu, elapsed, console_width, version=None, venv_line=None):
+def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_line=None):
 	t = elapsed % dance.DURATION
 	animation = Text.from_ansi(dance.render(dance.frame(t, border=False)), no_wrap=True)
 
@@ -214,6 +215,8 @@ def _render(menu, elapsed, console_width, version=None, venv_line=None):
 		header.append(Text(version, style="dim", justify="center"))
 	if venv_line is not None:
 		header.append(venv_line)
+	if extra_line is not None:
+		header.append(extra_line)
 
 	visible_items, scroll_offset, more_above, more_below = menu.visible()
 
@@ -291,7 +294,7 @@ def _render(menu, elapsed, console_width, version=None, venv_line=None):
 	return Group(*body)
 
 
-def _show_menu(items=None):
+def _show_menu(items=None, extra_line=None):
 	"""
 	Run the animated menu until a selection is made ('enter') or the user
 	quits ('q'/bare Escape). Returns the chosen key, or None if quit.
@@ -299,6 +302,8 @@ def _show_menu(items=None):
 	`items` defaults to the top-level MENU_ITEMS; passing MICROPYTHON_MENU_ITEMS
 	(or any other list) renders the exact same animated menu one level deeper --
 	this is the whole submenu mechanism, no separate rendering path needed.
+	`extra_line` is an optional Text shown under the version/venv lines --
+	the MicroPython submenu uses it to show the currently selected device.
 
 	Recomputes the version line fresh on every call rather than once for
 	the whole launcher session: a micro-utility run in between (repository
@@ -316,14 +321,14 @@ def _show_menu(items=None):
 	old_settings = termios.tcgetattr(fd)
 	try:
 		tty.setcbreak(fd)
-		with Live(_render(menu, 0, console.width, version, venv_line), console=console, screen=False,
+		with Live(_render(menu, 0, console.width, version, venv_line, extra_line), console=console, screen=False,
 				  auto_refresh=False, transient=True) as live:
 			while True:
 				## console.width read fresh every frame, not cached from
 				## before the loop started -- a resized terminal window
 				## must recentre on the next frame, not stay centered for
 				## whatever size the window happened to be at launch.
-				live.update(_render(menu, time.monotonic() - start, console.width, version, venv_line),
+				live.update(_render(menu, time.monotonic() - start, console.width, version, venv_line, extra_line),
 							refresh=True)
 
 				ready, _, _ = select.select([fd], [], [], 1 / FPS)
@@ -358,13 +363,49 @@ def _show_menu(items=None):
 	return choice
 
 
+def _select_device():
+	"""
+	Pick a MicroPython-looking device via the same animated menu UI as
+	everything else -- reuses _show_menu() with a synthesized item list,
+	rather than a plain numbered prompt. Returns a port string, or None if
+	there's nothing to pick from, or the user backs out.
+	"""
+	from core.idioms import devicetree
+
+	candidates = devicetree.micropython_candidates()
+	if not candidates:
+		Console().print("[dim]No MicroPython-looking serial devices found.[/dim]")
+		return None
+	items = [(p.device, p.device + (f" ({p.serial_number})" if p.serial_number else ""))
+			 for p in candidates]
+	items.append(("_cancel", "< Cancel"))
+	choice = _show_menu(items)
+	return None if choice in (None, "_cancel") else choice
+
+
+def _device_line(port):
+	line = Text("Device: ", justify="center")
+	line.append(port if port else "(none selected -- each action will prompt)",
+				style="green" if port else "yellow")
+	return line
+
+
 def _show_micropython_menu():
 	"""
-	The "MicroPython >" submenu -- Flash MicroPython / Flash firmware /
-	Configure board / Wipe device. Runs its own loop (same return-to-menu-
-	or-leave prompt as the top-level one) until the user picks "< Back" or
-	quits, at which point control returns to run_launcher()'s own loop,
-	redrawing the top menu -- not the whole launcher exiting.
+	The "MicroPython >" submenu -- Select device / Flash MicroPython /
+	Flash firmware / Configure board / Wipe device. Runs its own loop
+	(same return-to-menu-or-leave prompt as the top-level one) until the
+	user picks "< Back" or quits, at which point control returns to
+	run_launcher()'s own loop, redrawing the top menu -- not the whole
+	launcher exiting.
+
+	The selected device (a port string, or None) is remembered for as
+	long as this submenu stays open and passed to every action below --
+	pick it once, use it for several actions in a row, instead of being
+	asked again each time. Each action still falls back to its own picker
+	if nothing was selected here, or if the selected port is no longer
+	connected (core.installer.mpyfirmware.pick_device()'s `preselected`
+	handling covers that).
 	"""
 	from .utilities import configure_board, flash_firmware, flash_micropython, wipe_device
 	from rich.prompt import Confirm
@@ -376,13 +417,19 @@ def _show_micropython_menu():
 		"wipe_device": wipe_device.wipe,
 	}
 
+	selected_port = None
+
 	while True:
-		choice = _show_menu(MICROPYTHON_MENU_ITEMS)
+		choice = _show_menu(MICROPYTHON_MENU_ITEMS, extra_line=_device_line(selected_port))
 
 		if choice is None or choice == "back":
 			return
 
-		MICROPYTHON_UTILITIES[choice]()
+		if choice == "select_device":
+			selected_port = _select_device()
+			continue
+
+		MICROPYTHON_UTILITIES[choice](port=selected_port)
 
 		if not Confirm.ask("\nReturn to the MicroPython menu?", default=True):
 			return

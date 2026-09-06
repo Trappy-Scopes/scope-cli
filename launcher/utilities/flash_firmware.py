@@ -7,9 +7,9 @@ that's already configured.
 """
 
 
-def flash():
+def flash(port=None):
 	from core.installer import mpyfirmware
-	mpyfirmware.sync()
+	mpyfirmware.sync(port=port)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,9 @@ mpyfirmware.wipe() itself asks for confirmation before doing anything.
 """
 
 
-def wipe():
+def wipe(port=None):
 	from core.installer import mpyfirmware
-	mpyfirmware.wipe()
+	mpyfirmware.wipe(port=port)
 
 
 if __name__ == "__main__":

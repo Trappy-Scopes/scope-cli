@@ -58,10 +58,12 @@ def _print_known_circuits(console, circuits):
     console.print(Columns(entries, padding=(0, 3), equal=False))
 
 
-def configure(console=None):
+def configure(console=None, port=None):
+    """`port` (from the launcher's "Select device") is used directly if
+    it's still connected, skipping the picker -- see mpyfirmware.pick_device()."""
     console = console or Console()
 
-    chosen = mpyfirmware.pick_device(console)
+    chosen = mpyfirmware.pick_device(console, preselected=port)
     if chosen is None:
         return
 

@@ -46,14 +46,24 @@ def _mpy_config():
     return (TrappyConfig().get().get("config") or {}).get("micropython") or {}
 
 
-def pick_device(console, candidates=None):
-    """Prompt the user to choose among devicetree.micropython_candidates()
-    (or an already-fetched list). Returns a ListPortInfo, or None."""
+def pick_device(console, candidates=None, preselected=None):
+    """
+    A device to act on. `preselected` (a port string, e.g. from the
+    launcher's MicroPython submenu remembering a prior "Select device")
+    is used directly if it's still among the current candidates -- no
+    prompt at all in that case. Otherwise prompts (or auto-picks if
+    there's only one candidate). Returns a ListPortInfo, or None.
+    """
     if candidates is None:
         candidates = devicetree.micropython_candidates()
     if not candidates:
         console.print("[dim]No MicroPython-looking serial devices found.[/dim]")
         return None
+    if preselected:
+        for p in candidates:
+            if p.device == preselected:
+                return p
+        console.print(f"[yellow]{preselected} is no longer connected -- pick again.[/yellow]")
     if len(candidates) == 1:
         return candidates[0]
     console.print("[bold]MicroPython devices found:[/bold]")
@@ -194,11 +204,13 @@ def _resolve_firmware_image(image_path, console, dry_run=False):
     return os.path.expanduser(image_path)
 
 
-def flash(console=None, dry_run=False):
+def flash(console=None, dry_run=False, port=None):
     """
     Flash config.micropython.firmware_image onto a device, skipping it if
     the device already reports config.micropython.version, unless the user
-    asks to reflash anyway. Uses picotool
+    asks to reflash anyway. `port` (from the launcher's "Select device")
+    is used directly if it's still connected, skipping the picker -- see
+    pick_device(). Uses picotool
     if it's on PATH (verified this session: neither Homebrew on Intel Mac
     nor Debian stable's apt has it, but raspberrypi/pico-sdk-tools ships a
     prebuilt binary for every real target here except 32-bit Raspberry Pi
@@ -216,16 +228,16 @@ def flash(console=None, dry_run=False):
         return
 
     candidates = devicetree.micropython_candidates()
-    port = None
+    device_port = None
     if candidates:
-        chosen = pick_device(console, candidates)
+        chosen = pick_device(console, candidates, preselected=port)
         if chosen is None:
             return
-        port = chosen.device
+        device_port = chosen.device
         if locked_version:
-            info = devicetree.probe_micropython(port)
+            info = devicetree.probe_micropython(device_port)
             if info and info.get("mpy_version") == locked_version:
-                console.print(f"[green]{port} already reports MicroPython "
+                console.print(f"[green]{device_port} already reports MicroPython "
                                f"{locked_version}.[/green]")
                 if not Confirm.ask("Reflash anyway?", default=False):
                     return
@@ -238,9 +250,9 @@ def flash(console=None, dry_run=False):
         console.print("[red]No firmware image available -- nothing to flash.[/red]")
         return
 
-    if port:
-        console.print(f"Resetting {port} into bootloader mode ...")
-        if not _enter_bootloader(port, console):
+    if device_port:
+        console.print(f"Resetting {device_port} into bootloader mode ...")
+        if not _enter_bootloader(device_port, console):
             return
     else:
         console.print("[yellow]No running MicroPython device found -- "
@@ -342,8 +354,11 @@ def _resolve_excludes(root, manifest):
 _RUN_MAIN_SCRIPT = "exec(open('pico_firmware/main.py').read())"
 
 
-def sync(console=None, dry_run=False):
+def sync(console=None, dry_run=False, port=None):
     """
+    `port` (from the launcher's "Select device") is used directly if
+    it's still connected, skipping the picker -- see pick_device().
+
     Sync config.micropython.firmware_dir onto a device via
     SerialMPDevice.sync_files() -- incremental (skip_unchanged), so this
     works for both a fresh device and updating one already running it.
@@ -375,7 +390,7 @@ def sync(console=None, dry_run=False):
         console.print(f"[red]firmware_dir does not exist: {firmware_dir}[/red]")
         return
 
-    chosen = pick_device(console)
+    chosen = pick_device(console, preselected=port)
     if chosen is None:
         return
 
@@ -435,8 +450,11 @@ _WIPE_SCRIPT = (
 )
 
 
-def wipe(console=None, dry_run=False):
+def wipe(console=None, dry_run=False, port=None):
     """
+    `port` (from the launcher's "Select device") is used directly if
+    it's still connected, skipping the picker -- see pick_device().
+
     Recursively delete everything on a device's filesystem, over the
     existing raw-REPL connection -- no reflashing needed. Firmware
     flashing doesn't touch the separate filesystem region at all, so
@@ -453,7 +471,7 @@ def wipe(console=None, dry_run=False):
     speculatively.
     """
     console = console or Console()
-    chosen = pick_device(console)
+    chosen = pick_device(console, preselected=port)
     if chosen is None:
         return
 
