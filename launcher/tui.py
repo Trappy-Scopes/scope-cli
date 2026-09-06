@@ -41,18 +41,23 @@ ESCAPE_TIMEOUT = 0.02  # seconds to wait for the rest of an arrow-key sequence
 
 MENU_ITEMS = [
 	("launch", "Launch normally"),
-	("check", "Check configuration file"),
-	("sync", "Sync configuration file"),
 	("repos", "Repository utility"),
 	("devicetree", "Device tree"),
 	("register", "Register device"),
+	("configuration", "Configuration >"),
 	("micropython", "MicroPython >"),
 	## Restored: core/installer/installer.py now uses `pip install -e .`,
 	## the bug that broke a dev's editable install is fixed.
 	("install", "Install / setup"),
 	("intro", "Show the introduction"),
-	("edit", "Edit the configuration file"),
 	("exit", "Exit"),
+]
+
+CONFIGURATION_MENU_ITEMS = [
+	("check", "Check configuration file"),
+	("sync", "Sync configuration file"),
+	("edit", "Edit the configuration file"),
+	("back", "< Back"),
 ]
 
 MICROPYTHON_MENU_ITEMS = [
@@ -444,6 +449,36 @@ def _show_micropython_menu():
 			return
 
 
+def _show_configuration_menu():
+	"""
+	The "Configuration >" submenu -- Check configuration file / Sync
+	configuration file / Edit the configuration file. Same submenu
+	mechanism as "MicroPython >" (_show_menu() one level deeper, its own
+	return-to-menu-or-leave loop) -- no device axis needed here, so it's
+	the simpler shape _show_micropython_menu() itself used before device
+	selection was added.
+	"""
+	from .utilities import check_config, edit_config, sync_config
+	from rich.prompt import Confirm
+
+	CONFIGURATION_UTILITIES = {
+		"check": check_config.check,
+		"sync": sync_config.sync_trappyverse,
+		"edit": edit_config.edit,
+	}
+
+	while True:
+		choice = _show_menu(CONFIGURATION_MENU_ITEMS)
+
+		if choice is None or choice == "back":
+			return
+
+		CONFIGURATION_UTILITIES[choice]()
+
+		if not Confirm.ask("\nReturn to the Configuration menu?", default=True):
+			return
+
+
 def run_launcher():
 	"""
 	Show the animated menu and run whichever action was chosen, looping
@@ -455,24 +490,19 @@ def run_launcher():
 	For every other ("micro-utility") action, the utility runs to
 	completion showing its own output, then a plain yes/no prompt asks
 	whether to return to the menu or leave -- the launcher keeps running
-	until the user explicitly does one or the other. "MicroPython >" is the
-	one exception: it opens its own submenu (_show_micropython_menu()) and,
-	on return, goes straight back to this loop -- no extra "return to menu?"
+	until the user explicitly does one or the other. "Configuration >" and
+	"MicroPython >" are the exceptions: they open their own submenus and,
+	on return, go straight back to this loop -- no extra "return to menu?"
 	prompt on top of the submenu's own.
 	"""
-	from .utilities import (check_config, device_tree, edit_config, installer,
-							 intro, launch_normally, register_device, repo_sync,
-							 sync_config)
+	from .utilities import device_tree, installer, intro, launch_normally, register_device, repo_sync
 
 	MICRO_UTILITIES = {
-		"check": check_config.check,
-		"sync": sync_config.sync_trappyverse,
 		"repos": repo_sync.check_and_sync,
 		"devicetree": device_tree.show,
 		"register": register_device.register,
 		"install": installer.install,
 		"intro": intro.show,
-		"edit": edit_config.edit,
 	}
 
 	while True:
@@ -485,6 +515,9 @@ def run_launcher():
 			return
 		if choice == "micropython":
 			_show_micropython_menu()
+			continue
+		if choice == "configuration":
+			_show_configuration_menu()
 			continue
 
 		MICRO_UTILITIES[choice]()
