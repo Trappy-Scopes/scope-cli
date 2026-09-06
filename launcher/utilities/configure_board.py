@@ -18,6 +18,7 @@ import tempfile
 
 from rich.columns import Columns
 from rich.console import Console
+from rich.prompt import Confirm
 from rich.text import Text
 
 from core.external import pyboard
@@ -78,8 +79,29 @@ def configure(console=None):
         if board_.fs_exists("board.py"):
             board_.fs_get("board.py", local_path)
         else:
-            console.print("[yellow]No board.py on the device yet -- "
-                           "starting from an empty file.[/yellow]")
+            console.print("[yellow]No board.py on the device yet.[/yellow]")
+
+        with open(local_path) as f:
+            is_empty = not f.read().strip()
+
+        if is_empty:
+            console.print("[yellow]board.py is empty.[/yellow]")
+            ## pico_firmware/main.py itself writes a real default (name,
+            ## circuit_id="idle_device_that_blinks", the wifi/dt-sync flags)
+            ## the first time it finds no board.py -- re-running it gets that
+            ## same default without us having to reproduce its format here.
+            ## This also re-triggers whatever circuit_id ends up set, same as
+            ## a normal reboot would -- not a side-effect-free operation.
+            if Confirm.ask("Execute pico_firmware/main.py to generate a default?", default=True):
+                try:
+                    board_.exec_("exec(open('pico_firmware/main.py').read())")
+                except Exception as e:
+                    console.print(f"[red]Running main.py failed: {e}[/red]")
+                if board_.fs_exists("board.py"):
+                    board_.fs_get("board.py", local_path)
+
+        if not Confirm.ask("Edit board.py now?", default=True):
+            return
 
         os.system(f'{pick_editor()} "{local_path}"')
 

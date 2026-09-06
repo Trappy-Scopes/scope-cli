@@ -390,5 +390,74 @@ def sync(console=None, dry_run=False):
         device.disconnect()
 
 
+# ------------------------------------------------------------------ wipe ---
+
+_WIPE_SCRIPT = (
+    "import os\n"
+    "def _rm(path):\n"
+    "    try:\n"
+    "        os.remove(path)\n"
+    "    except OSError:\n"
+    "        for entry in os.listdir(path):\n"
+    "            _rm(path + '/' + entry)\n"
+    "        os.rmdir(path)\n"
+    "for entry in os.listdir('/'):\n"
+    "    _rm('/' + entry)\n"
+    "print('wiped')\n"
+)
+
+
+def wipe(console=None, dry_run=False):
+    """
+    Recursively delete everything on a device's filesystem, over the
+    existing raw-REPL connection -- no reflashing needed. Firmware
+    flashing doesn't touch the separate filesystem region at all, so
+    that's not a route to reclaiming space here; the dedicated tool for
+    that (flash_nuke.uf2) is a whole extra firmware image to flash and
+    then reflash away from, a bigger and more roundabout thing to reach
+    for than a few lines of MicroPython run once over the connection this
+    tool already has open.
+
+    For exactly the situation this session actually hit: a sync that
+    failed partway with ENOSPC leaves orphaned files on the device that a
+    normal sync can never clean up on its own (sync_files() only adds or
+    updates, it never deletes) -- confirmed the hard way, not
+    speculatively.
+    """
+    console = console or Console()
+    chosen = pick_device(console)
+    if chosen is None:
+        return
+
+    console.print(f"[red]This deletes EVERYTHING on {chosen.device}'s filesystem.[/red]")
+    if not Confirm.ask("Proceed?", default=False):
+        return
+
+    board_ = None
+    try:
+        board_ = pyboard.Pyboard(chosen.device, 115200)
+        board_.enter_raw_repl()
+        if dry_run:
+            console.print("[dim]Dry run -- would delete everything under /[/dim]")
+            return
+        output = board_.exec_(_WIPE_SCRIPT).decode().strip()
+        if output == "wiped":
+            console.print(f"[green]{chosen.device} filesystem wiped.[/green]")
+        else:
+            console.print(f"[yellow]Unexpected output: {output}[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Wipe failed: {e}[/red]")
+    finally:
+        if board_ is not None:
+            try:
+                board_.exit_raw_repl()
+            except Exception:
+                pass
+            try:
+                board_.close()
+            except Exception:
+                pass
+
+
 if __name__ == "__main__":
     pass
