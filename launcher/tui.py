@@ -41,7 +41,7 @@ ESCAPE_TIMEOUT = 0.02  # seconds to wait for the rest of an arrow-key sequence
 
 MENU_ITEMS = [
 	("launch", "Launch normally"),
-	("repos", "Repository utility"),
+	("repos", "Repository utility >"),
 	("devicetree", "Device tree"),
 	("register", "Register device"),
 	("configuration", "Configuration >"),
@@ -479,6 +479,49 @@ def _show_configuration_menu():
 			return
 
 
+def _show_repo_menu():
+	"""
+	The "Repository utility >" submenu -- prints the status table, then
+	an animated menu (same _show_menu() mechanism as MicroPython/
+	Configuration) to pick ONE repo to pull. Repos come from
+	repo_sync.all_repos() every time this redraws (not a static item
+	list, unlike MicroPython/Configuration's fixed menus), which now
+	includes trappyscopes' own repo alongside config.git_dependencies --
+	previously the one repo this tool had no update option for at all.
+
+	Pulling re-prints an updated table before the menu appears again,
+	rather than pulling everything behind at once with no way to see
+	what actually changed afterward.
+	"""
+	from .utilities import repo_sync
+	from rich.console import Console
+	from rich.prompt import Confirm
+
+	console = Console()
+
+	while True:
+		repos = repo_sync.all_repos()
+		if not repos:
+			console.print("[yellow]No repositories declared in config.git_dependencies.[/yellow]")
+			return
+		table, statuses = repo_sync.status_table(repos)
+		console.print(table)
+
+		items = [(label, label) for label in repos] + [("back", "< Back")]
+		choice = _show_menu(items)
+
+		if choice is None or choice == "back":
+			return
+
+		dirty, ahead, behind, error = statuses.get(choice, (None, None, None, None))
+		if error:
+			console.print(f"[red]Cannot sync {choice}: {error}[/red]")
+		elif not behind:
+			console.print(f"[dim]{choice} is already up to date.[/dim]")
+		elif Confirm.ask(f"Pull {choice}?", default=True):
+			repo_sync.pull(choice, repos[choice], console)
+
+
 def run_launcher():
 	"""
 	Show the animated menu and run whichever action was chosen, looping
@@ -490,15 +533,14 @@ def run_launcher():
 	For every other ("micro-utility") action, the utility runs to
 	completion showing its own output, then a plain yes/no prompt asks
 	whether to return to the menu or leave -- the launcher keeps running
-	until the user explicitly does one or the other. "Configuration >" and
-	"MicroPython >" are the exceptions: they open their own submenus and,
-	on return, go straight back to this loop -- no extra "return to menu?"
-	prompt on top of the submenu's own.
+	until the user explicitly does one or the other. "Repository utility >",
+	"Configuration >" and "MicroPython >" are the exceptions: they open
+	their own submenus and, on return, go straight back to this loop -- no
+	extra "return to menu?" prompt on top of the submenu's own.
 	"""
-	from .utilities import device_tree, installer, intro, launch_normally, register_device, repo_sync
+	from .utilities import device_tree, installer, intro, launch_normally, register_device
 
 	MICRO_UTILITIES = {
-		"repos": repo_sync.check_and_sync,
 		"devicetree": device_tree.show,
 		"register": register_device.register,
 		"install": installer.install,
@@ -518,6 +560,9 @@ def run_launcher():
 			continue
 		if choice == "configuration":
 			_show_configuration_menu()
+			continue
+		if choice == "repos":
+			_show_repo_menu()
 			continue
 
 		MICRO_UTILITIES[choice]()
