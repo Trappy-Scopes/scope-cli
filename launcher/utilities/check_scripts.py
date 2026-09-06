@@ -16,20 +16,24 @@ import importlib.util
 import os
 
 from rich.console import Console
+from rich.table import Table
 
 from core.permaconfig.config import TrappyConfig
 
 
 def _find_scripts(scripts_dirs):
-	paths = []
+	"""[(path, root), ...] -- `root` (whichever scripts_dir a script was
+	found under) travels with each path so callers can show it relative
+	to that root instead of the full absolute path."""
+	found = []
 	for root in scripts_dirs:
 		root = os.path.expanduser(root)
 		if not os.path.isdir(root):
 			continue
 		for dirpath, dirnames, filenames in os.walk(root):
 			dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-			paths += [os.path.join(dirpath, f) for f in filenames if f.endswith(".py")]
-	return paths
+			found += [(os.path.join(dirpath, f), root) for f in filenames if f.endswith(".py")]
+	return found
 
 
 def _top_level_imports(path):
@@ -78,21 +82,28 @@ def check(console=None):
 		console.print(f"[dim]No .py scripts found under {scripts_dirs}.[/dim]")
 		return
 
-	console.print(f"Checking {len(scripts)} script(s) under {scripts_dirs} ...")
-	any_missing = False
-	for path in scripts:
+	table = Table(title=f"Script dependency check ({len(scripts)} script(s) found)")
+	table.add_column("Script")
+	table.add_column("Issue", style="red")
+
+	problems = 0
+	for path, root in scripts:
+		rel = os.path.relpath(path, root)
 		names = _top_level_imports(path)
 		if names is None:
-			console.print(f"  [red]{path}: could not parse (syntax error)[/red]")
-			any_missing = True
+			table.add_row(rel, "could not parse (syntax error)")
+			problems += 1
 			continue
 		missing = _missing(names)
 		if missing:
-			any_missing = True
-			console.print(f"  [red]{path}: missing {', '.join(missing)}[/red]")
+			table.add_row(rel, f"missing {', '.join(missing)}")
+			problems += 1
 
-	if not any_missing:
-		console.print("[green]All declared scripts' imports resolve in the current environment.[/green]")
+	if problems:
+		console.print(table)
+	else:
+		console.print(f"[green]All {len(scripts)} declared scripts' imports resolve "
+					   f"in the current environment.[/green]")
 
 
 if __name__ == "__main__":
