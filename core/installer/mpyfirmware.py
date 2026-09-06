@@ -278,29 +278,53 @@ def _load_sync_manifest(firmware_dir):
     if not os.path.isfile(path):
         return None
     with open(path) as f:
-        manifest = yaml.safe_load(f) or {}
-    return manifest.get("exclude") or {}
+        return yaml.safe_load(f) or {}
 
 
-def _resolve_excludes(firmware_dir):
+def _sync_roots(firmware_dir, manifest):
     """
-    (skip_dirs, skip_files) for SerialMPDevice.sync_files() -- read from the
-    firmware repo's own sync_what.yaml if present (patterns expanded against
-    the real directory listing, since sync_files() checks bare-name
-    membership, not glob patterns), else SerialMPDevice's own current
-    defaults.
+    [(local_source, device_dest), ...] -- one pair per manifest 'include'
+    entry, each a subdirectory name relative to firmware_dir, synced onto
+    the same-named path under the device's root (so "pico_firmware" ->
+    firmware_dir/pico_firmware synced to /pico_firmware). No 'include', or
+    no manifest at all: a single (firmware_dir, "/") pair -- the whole repo
+    root mirrored onto the device root, the original default from before
+    this manifest mechanism existed.
+
+    Restricting to named subdirectories, not the whole repo root, is also
+    what makes the stale-nested-duplicate problem solvable: scoped to
+    firmware_dir/pico_firmware, a directory also named "pico_firmware" can
+    now only be the duplicate *inside* it -- never the sync root itself --
+    so excluding that bare name (see _resolve_excludes()) is unambiguous
+    here in a way it wasn't when the whole repo root was walked at once.
+    """
+    include = (manifest or {}).get("include")
+    if not include:
+        return [(firmware_dir, "/")]
+    return [(os.path.join(firmware_dir, name), f"/{name}") for name in include]
+
+
+def _resolve_excludes(root, manifest):
+    """
+    (skip_dirs, skip_files) for SerialMPDevice.sync_files() -- resolved
+    against `root` (whichever tree is actually about to be walked, per
+    _sync_roots() -- not necessarily firmware_dir itself), from the
+    firmware repo's own sync_what.yaml if it declares an 'exclude' block
+    (patterns expanded against the real directory listing, since
+    sync_files() checks bare-name membership, not glob patterns), else
+    SerialMPDevice's own current defaults.
     """
     from hive.processorgroups.micropython import SerialMPDevice
 
-    exclude = _load_sync_manifest(firmware_dir)
-    if exclude is None:
+    exclude = (manifest or {}).get("exclude")
+    if not exclude:
         return SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES
 
     dir_patterns = exclude.get("dirs") or []
     file_patterns = exclude.get("files") or []
 
     all_dir_names, all_file_names = set(), set()
-    for _root, dirs, files in os.walk(firmware_dir):
+    for _r, dirs, files in os.walk(root):
         all_dir_names.update(dirs)
         all_file_names.update(files)
 
@@ -317,10 +341,13 @@ def _resolve_excludes(firmware_dir):
 
 def sync(console=None, dry_run=False):
     """
-    Sync config.micropython.firmware_dir (the pico_firmware repo root) onto
-    a device via SerialMPDevice.sync_files() -- incremental (skip_unchanged),
-    so this works for both a fresh device (auto-bootstraps board.py and
-    blinks, per pico_firmware/main.py) and updating one already running it.
+    Sync config.micropython.firmware_dir onto a device via
+    SerialMPDevice.sync_files() -- incremental (skip_unchanged), so this
+    works for both a fresh device (auto-bootstraps board.py and blinks,
+    per pico_firmware/main.py) and updating one already running it. What
+    actually gets synced -- the whole repo root, or just specific named
+    subdirectories -- and what's excluded within that, both come from the
+    repo's own sync_what.yaml (see _sync_roots()/_resolve_excludes()).
     """
     from hive.processorgroups.micropython import SerialMPDevice
 
@@ -339,19 +366,28 @@ def sync(console=None, dry_run=False):
     if chosen is None:
         return
 
-    skip_dirs, skip_files = _resolve_excludes(firmware_dir)
+    manifest = _load_sync_manifest(firmware_dir)
+    roots = _sync_roots(firmware_dir, manifest)
+
+    device = SerialMPDevice(name=chosen.device, connect=True, port=chosen.device)
+    device.connect(chosen.device)
+    if not device.connected:
+        console.print(f"[red]Could not connect to {chosen.device}.[/red]")
+        return
+
     original = (SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES)
-    SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES = skip_dirs, skip_files
     try:
-        device = SerialMPDevice(name=chosen.device, connect=True, port=chosen.device)
-        device.connect(chosen.device)
-        if not device.connected:
-            console.print(f"[red]Could not connect to {chosen.device}.[/red]")
-            return
-        device.sync_files(firmware_dir, "/", dry_run=dry_run, verbose=True)
-        device.disconnect()
+        for local_source, device_dest in roots:
+            if not os.path.isdir(local_source):
+                console.print(f"[red]sync_what.yaml names a subdirectory that "
+                               f"doesn't exist: {local_source}[/red]")
+                continue
+            skip_dirs, skip_files = _resolve_excludes(local_source, manifest)
+            SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES = skip_dirs, skip_files
+            device.sync_files(local_source, device_dest, dry_run=dry_run, verbose=True)
     finally:
         SerialMPDevice.SKIP_DIRS, SerialMPDevice.SKIP_FILES = original
+        device.disconnect()
 
 
 if __name__ == "__main__":
