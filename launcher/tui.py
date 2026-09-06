@@ -48,7 +48,7 @@ MENU_ITEMS = [
 	("micropython", "MicroPython >"),
 	## Restored: core/installer/installer.py now uses `pip install -e .`,
 	## the bug that broke a dev's editable install is fixed.
-	("install", "Install / setup"),
+	("install", "Install / setup >"),
 	("intro", "Show the introduction"),
 	("exit", "Exit"),
 ]
@@ -57,6 +57,14 @@ CONFIGURATION_MENU_ITEMS = [
 	("check", "Check configuration file"),
 	("sync", "Sync configuration file"),
 	("edit", "Edit the configuration file"),
+	("back", "< Back"),
+]
+
+INSTALL_MENU_ITEMS = [
+	("check_venv", "Check virtual environment"),
+	("check_config", "Check configuration file"),
+	("install_packages", "Install packages + hardware profiles"),
+	("check_scripts", "Check scripts' dependencies"),
 	("back", "< Back"),
 ]
 
@@ -512,6 +520,44 @@ def _show_configuration_menu():
 			return
 
 
+def _show_install_menu():
+	"""
+	The "Install / setup >" submenu -- Check virtual environment / Check
+	configuration file / Install packages + hardware profiles / Check
+	scripts' dependencies. Same submenu mechanism as Configuration/
+	MicroPython/Repository utility -- each item independent, run in any
+	order, any number of times, rather than a linear wizard.
+
+	This is the actual fix for "Install / setup" going straight into
+	`pip install -e .` with no way to back out or check anything first:
+	that's now its own explicit item (install_packages), and the three
+	pre-flight checks that used to not exist at all -- does the declared
+	config.venv actually exist, does trappyconfig.yaml exist, do the
+	scripts under Experiment.scripts_dirs have their imports satisfied --
+	are separate items here instead.
+	"""
+	from .utilities import check_config, check_scripts, check_venv, installer
+	from rich.prompt import Confirm
+
+	INSTALL_UTILITIES = {
+		"check_venv": check_venv.check,
+		"check_config": check_config.check,
+		"install_packages": installer.install,
+		"check_scripts": check_scripts.check,
+	}
+
+	while True:
+		choice = _show_menu(INSTALL_MENU_ITEMS)
+
+		if choice is None or choice == "back":
+			return
+
+		INSTALL_UTILITIES[choice]()
+
+		if not Confirm.ask("\nReturn to the Install/setup menu?", default=True):
+			return
+
+
 def _show_repo_menu():
 	"""
 	The "Repository utility >" submenu -- shows the status table centred
@@ -569,16 +615,16 @@ def run_launcher():
 	completion showing its own output, then a plain yes/no prompt asks
 	whether to return to the menu or leave -- the launcher keeps running
 	until the user explicitly does one or the other. "Repository utility >",
-	"Configuration >" and "MicroPython >" are the exceptions: they open
-	their own submenus and, on return, go straight back to this loop -- no
-	extra "return to menu?" prompt on top of the submenu's own.
+	"Configuration >", "Install / setup >" and "MicroPython >" are the
+	exceptions: they open their own submenus and, on return, go straight
+	back to this loop -- no extra "return to menu?" prompt on top of the
+	submenu's own.
 	"""
-	from .utilities import device_tree, installer, intro, launch_normally, register_device
+	from .utilities import device_tree, intro, launch_normally, register_device
 
 	MICRO_UTILITIES = {
 		"devicetree": device_tree.show,
 		"register": register_device.register,
-		"install": installer.install,
 		"intro": intro.show,
 	}
 
@@ -595,6 +641,9 @@ def run_launcher():
 			continue
 		if choice == "configuration":
 			_show_configuration_menu()
+			continue
+		if choice == "install":
+			_show_install_menu()
 			continue
 		if choice == "repos":
 			_show_repo_menu()
