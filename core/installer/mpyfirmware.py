@@ -197,7 +197,8 @@ def _resolve_firmware_image(image_path, console, dry_run=False):
 def flash(console=None, dry_run=False):
     """
     Flash config.micropython.firmware_image onto a device, skipping it if
-    the device already reports config.micropython.version. Uses picotool
+    the device already reports config.micropython.version, unless the user
+    asks to reflash anyway. Uses picotool
     if it's on PATH (verified this session: neither Homebrew on Intel Mac
     nor Debian stable's apt has it, but raspberrypi/pico-sdk-tools ships a
     prebuilt binary for every real target here except 32-bit Raspberry Pi
@@ -225,8 +226,9 @@ def flash(console=None, dry_run=False):
             info = devicetree.probe_micropython(port)
             if info and info.get("mpy_version") == locked_version:
                 console.print(f"[green]{port} already reports MicroPython "
-                               f"{locked_version} -- nothing to do.[/green]")
-                return
+                               f"{locked_version}.[/green]")
+                if not Confirm.ask("Reflash anyway?", default=False):
+                    return
 
     ## Resolved (and, if it's a URL, downloaded) only now -- after the
     ## skip-if-already-current check -- so a device that turns out not to
