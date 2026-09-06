@@ -64,7 +64,8 @@ INSTALL_MENU_ITEMS = [
 	("check_venv", "Check virtual environment"),
 	("check_config", "Check configuration file"),
 	("install_packages", "Install packages + hardware profiles"),
-	("check_scripts", "Check scripts' dependencies"),
+	("check_scripts_all", "Check all scripts' dependencies"),
+	("check_scripts_one", "Check a specific script"),
 	("back", "< Back"),
 ]
 
@@ -543,7 +544,8 @@ def _show_install_menu():
 		"check_venv": check_venv.check,
 		"check_config": check_config.check,
 		"install_packages": installer.install,
-		"check_scripts": check_scripts.check,
+		"check_scripts_all": check_scripts.check_all,
+		"check_scripts_one": check_scripts.check_specific,
 	}
 
 	while True:
