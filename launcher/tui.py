@@ -56,7 +56,6 @@ MENU_ITEMS = [
 ]
 
 MICROPYTHON_MENU_ITEMS = [
-	("select_device", "Select device"),
 	("flash_mpy", "Flash MicroPython"),
 	("flash_firmware", "Flash firmware"),
 	("configure_board", "Configure board"),
@@ -116,9 +115,9 @@ class Menu:
 def _decode_key(first, read_byte):
 	"""
 	Turn a single already-read byte (plus, for escape sequences, a callback
-	to read the following bytes) into one of 'up', 'down', 'enter', 'quit',
-	or None (unrecognised). Pure logic, no terminal I/O -- `read_byte` is
-	injected so this can be tested without a real tty.
+	to read the following bytes) into one of 'up', 'down', 'left', 'right',
+	'enter', 'quit', or None (unrecognised). Pure logic, no terminal I/O --
+	`read_byte` is injected so this can be tested without a real tty.
 	"""
 	if first in ("\r", "\n"):
 		return "enter"
@@ -133,6 +132,10 @@ def _decode_key(first, read_byte):
 			return "up"
 		if third == "B":
 			return "down"
+		if third == "C":
+			return "right"
+		if third == "D":
+			return "left"
 		return None
 	return None
 
@@ -294,16 +297,25 @@ def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_li
 	return Group(*body)
 
 
-def _show_menu(items=None, extra_line=None):
+def _show_menu(items=None, extra_line=None, device_options=None, device_index=0):
 	"""
 	Run the animated menu until a selection is made ('enter') or the user
-	quits ('q'/bare Escape). Returns the chosen key, or None if quit.
+	quits ('q'/bare Escape). Returns the chosen key, or None if quit --
+	unless `device_options` is given (see below), in which case it returns
+	(chosen_key_or_None, current_device_or_None) instead.
 
 	`items` defaults to the top-level MENU_ITEMS; passing MICROPYTHON_MENU_ITEMS
 	(or any other list) renders the exact same animated menu one level deeper --
 	this is the whole submenu mechanism, no separate rendering path needed.
-	`extra_line` is an optional Text shown under the version/venv lines --
-	the MicroPython submenu uses it to show the currently selected device.
+	`extra_line` is an optional Text shown under the version/venv lines.
+
+	`device_options` (a list of strings, e.g. connected device ports) turns
+	on Left/Right cycling through them, live, on this same screen -- no
+	separate picker page. Up/Down still move between menu items as normal.
+	The current one is shown via _device_line(), overriding `extra_line`
+	while cycling is active. Passing `device_options=None` (the default)
+	leaves this off entirely and keeps the plain single-value return, so
+	every caller that doesn't need it is unaffected.
 
 	Recomputes the version line fresh on every call rather than once for
 	the whole launcher session: a micro-utility run in between (repository
@@ -313,22 +325,28 @@ def _show_menu(items=None, extra_line=None):
 	menu = Menu(items if items is not None else MENU_ITEMS)
 	console = Console()
 	choice = None
+	idx = device_index
 	start = time.monotonic()
 	version = _version_line()
 	venv_line = _venv_line()
+
+	def current_extra_line():
+		if device_options:
+			return _device_line(device_options[idx])
+		return extra_line
 
 	fd = sys.stdin.fileno()
 	old_settings = termios.tcgetattr(fd)
 	try:
 		tty.setcbreak(fd)
-		with Live(_render(menu, 0, console.width, version, venv_line, extra_line), console=console, screen=False,
+		with Live(_render(menu, 0, console.width, version, venv_line, current_extra_line()), console=console, screen=False,
 				  auto_refresh=False, transient=True) as live:
 			while True:
 				## console.width read fresh every frame, not cached from
 				## before the loop started -- a resized terminal window
 				## must recentre on the next frame, not stay centered for
 				## whatever size the window happened to be at launch.
-				live.update(_render(menu, time.monotonic() - start, console.width, version, venv_line, extra_line),
+				live.update(_render(menu, time.monotonic() - start, console.width, version, venv_line, current_extra_line()),
 							refresh=True)
 
 				ready, _, _ = select.select([fd], [], [], 1 / FPS)
@@ -352,6 +370,10 @@ def _show_menu(items=None, extra_line=None):
 					menu.up()
 				elif key == "down":
 					menu.down()
+				elif key == "left" and device_options:
+					idx = (idx - 1) % len(device_options)
+				elif key == "right" and device_options:
+					idx = (idx + 1) % len(device_options)
 				elif key == "enter":
 					choice = menu.selected_key
 					break
@@ -360,62 +382,40 @@ def _show_menu(items=None, extra_line=None):
 	finally:
 		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
+	if device_options is not None:
+		return choice, (device_options[idx] if device_options else None)
 	return choice
-
-
-def _select_device():
-	"""
-	Pick a MicroPython-looking device via the same animated menu UI as
-	everything else -- reuses _show_menu() with a synthesized item list,
-	rather than a plain numbered prompt or a special-cased shortcut.
-	Returns a port string, or None if there's nothing to pick from, or the
-	user backs out.
-
-	One common menu regardless of how many candidates there are: with
-	just one, it's simply the only (and already-highlighted) item in an
-	otherwise ordinary menu -- one Enter press away -- not a second code
-	path that skips rendering it altogether.
-	"""
-	from core.idioms import devicetree
-
-	candidates = devicetree.micropython_candidates()
-	if not candidates:
-		Console().print("[dim]No MicroPython-looking serial devices found.[/dim]")
-		return None
-	items = [(p.device, p.device + (f" ({p.serial_number})" if p.serial_number else ""))
-			 for p in candidates]
-	items.append(("_cancel", "< Cancel"))
-	choice = _show_menu(items)
-	return None if choice in (None, "_cancel") else choice
 
 
 def _device_line(port):
 	line = Text("Device: ", justify="center")
-	line.append(port if port else "(none selected -- each action will prompt)",
-				style="green" if port else "yellow")
+	if port:
+		line.append(port, style="green")
+	else:
+		line.append("(no devices found)", style="yellow")
 	return line
 
 
 def _show_micropython_menu():
 	"""
-	The "MicroPython >" submenu -- Select device / Flash MicroPython /
-	Flash firmware / Configure board / Wipe device. Runs its own loop
-	(same return-to-menu-or-leave prompt as the top-level one) until the
-	user picks "< Back" or quits, at which point control returns to
-	run_launcher()'s own loop, redrawing the top menu -- not the whole
-	launcher exiting.
+	The "MicroPython >" submenu -- Flash MicroPython / Flash firmware /
+	Configure board / Wipe device. Runs its own loop (same return-to-menu-
+	or-leave prompt as the top-level one) until the user picks "< Back" or
+	quits, at which point control returns to run_launcher()'s own loop,
+	redrawing the top menu -- not the whole launcher exiting.
 
-	The selected device (a port string, or None) is picked once on entry
-	via _select_device() -- the same common picker "Select device" uses
-	later too, whether there's one candidate (the only, already-
-	highlighted item -- one Enter press away) or several -- and remembered
-	for as long as this submenu stays open, passed to every action below,
-	so picking it once covers a whole run of actions instead of being
-	asked again each time. Each action still falls back to its own picker
-	if nothing was selected here, or if the selected port is no longer
-	connected (core.installer.mpyfirmware.pick_device()'s `preselected`
-	handling covers that).
+	Which device an action targets is picked inline, on this same screen,
+	via Left/Right (see _show_menu()'s device_options) -- Up/Down still
+	move between the actions themselves. No separate picker page at all:
+	with one device connected, it's simply the only thing Left/Right can
+	land on; with several, cycling through them updates the "Device: ..."
+	line live. Candidates are re-read fresh every time this menu redraws,
+	so a device plugged in or unplugged between actions is picked up; the
+	current selection (by port string, not index -- devices can enumerate
+	in a different order after a re-scan) carries across actions run back
+	to back.
 	"""
+	from core.idioms import devicetree
 	from .utilities import configure_board, flash_firmware, flash_micropython, wipe_device
 	from rich.prompt import Confirm
 
@@ -426,17 +426,18 @@ def _show_micropython_menu():
 		"wipe_device": wipe_device.wipe,
 	}
 
-	selected_port = _select_device()
+	selected_port = None
 
 	while True:
-		choice = _show_menu(MICROPYTHON_MENU_ITEMS, extra_line=_device_line(selected_port))
+		device_ports = [p.device for p in devicetree.micropython_candidates()]
+		device_index = device_ports.index(selected_port) if selected_port in device_ports else 0
+
+		choice, selected_port = _show_menu(MICROPYTHON_MENU_ITEMS,
+											device_options=device_ports,
+											device_index=device_index)
 
 		if choice is None or choice == "back":
 			return
-
-		if choice == "select_device":
-			selected_port = _select_device()
-			continue
 
 		MICROPYTHON_UTILITIES[choice](port=selected_port)
 
