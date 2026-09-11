@@ -3,7 +3,7 @@ import os
 import logging as log
 from core.uid import uid
 import git
-import pkg_resources
+import importlib.metadata  # AI Generated -- pkg_resources is deprecated; stdlib replacement
 import time
 
 
@@ -65,8 +65,8 @@ class Session:
 		"""
 		pass
 
-	def pypkglist(self):
-		packages = [(pkg.key, pkg.version) for pkg in pkg_resources.working_set]
+	def pypkglist(self):  # AI Generated -- pkg_resources.working_set -> importlib.metadata.distributions()
+		packages = [(dist.metadata["Name"], dist.version) for dist in importlib.metadata.distributions()]
 
 		lst = []
 		for package, version in packages:

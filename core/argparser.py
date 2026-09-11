@@ -60,6 +60,11 @@ parser.add_argument('--intro', dest='intro', default=False, action='store_true',
                     help='Print the scope CLI introduction document.')
 ### ------------------------------------
 
+### --- launcher menu ------------------
+parser.add_argument('--launcher', dest='launcher', default=False, action='store_true',
+                    help='Open the animated menu instead of booting straight through.')
+### ------------------------------------
+
 
 ### --- MP4 converter ------------------
 parser.add_argument('-mp4', '--mp4', metavar=('<exp-name>'), dest='tomp4_exp', 
@@ -125,25 +130,29 @@ for script in args.scriptlist_:
 if None in scriptlist:
     scriptlist.remove(None)
 if len(scriptlist) > 0:
-    from expframework.scriptengine import ScriptEngine
-    ScriptEngine.execlist = scriptlist
     print("Scripts that will be loaded: ")
-    print(ScriptEngine.execlist)
+    print(scriptlist)
 ####### --------------------------------------
 
+
+## `core` must not import upwards into `expframework`, so the scriptlist is
+## only recorded here. The experiment environment recipe picks it up and hands
+## it to the ScriptEngine.
+Share.argparse["scriptlist"] = scriptlist
 
 Share.argparse["user"] = args.user[0]
 Share.argparse["expname"] = args.expname
 Share.argparse["noep"] = (args.noep or (len(scriptlist) > 0))
 Share.argparse["nofluff"] = args.nofluff
+Share.argparse["launcher"] = args.launcher
 
 if args.intro:
-    from utilities.fluff import intro
+    from core.utilities.fluff import intro
     intro()
     exit(0)
 
 if args.tomp4_exp:
-    from utilities.mp4box import MP4Box
+    from core.utilities.mp4box import MP4Box
     args.tomp4_exp = args.tomp4_exp[0]
     args.tomp4_exp = os.path.join(Share.expdir, args.tomp4_exp)
     if os.path.exists(args.tomp4_exp):

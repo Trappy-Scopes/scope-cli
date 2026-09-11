@@ -1,0 +1,22 @@
+# Tier 1b -- non-Python binaries for this profile. See core/installer/environment.py
+# for how each list is routed:
+#
+#   native      -> apt (Linux) / brew (Mac), our own minimal wrapper
+#   apt_only    -> apt specifically, never attempted on another OS -- for
+#                  things genuinely coupled to this board, not just "a Linux
+#                  binary that happens to also run elsewhere"
+#   conda_forge -> conda-forge via mamba; required on Windows (no native
+#                  wrapper exists there), opt-in elsewhere
+
+native:
+  - fim     # terminal image viewer, used by scripts/celltracking, scripts/alignmenttools
+  - tree
+
+apt_only:
+  - python3-picamera2   # linked against this board's own libcamera build --
+                        # not something pip or conda can install correctly;
+                        # must match the exact Raspberry Pi OS image in use
+
+conda_forge:
+  - pandoc      # expframework/report.py
+  - graphviz    # the `dot` binary (diagrams, graphviz python packages)

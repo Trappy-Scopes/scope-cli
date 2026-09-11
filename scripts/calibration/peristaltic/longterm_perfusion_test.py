@@ -137,8 +137,7 @@ def acquire():
 
 
 ## Schedule acquisitions
-exp.schedule.every().hour.do(acquire)
-exp.schedule.post_register("hourly_captures")
+exp.schedule.every().hour.do(acquire)  # registration now logs itself -- post_register() retired
 
 
 ## Configure

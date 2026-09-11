@@ -99,34 +99,76 @@ class MeasurementStream:
 		self.datapoint["measureid"] = self.uid
 		self.datapoint["measureidx"] = -1
 
-		self.df = DataFrame(columns=self.datapoint.keys())
-		self.df.set_index("measureidx")
 		self.readings = []
+		## AI Generated -- version counter backing the lazy `.df` property
+		## below, replacing the old eagerly-maintained DataFrame.
+		self._version = 0
+		self._df_cache = None
+		self._df_cache_version = -1
 
 		self.detections = []
 		self.measurements = []
 		self.monitors = []
+		## AI Generated -- {field: {label, unit, unit_latex, description,
+		## kind}}, populated by add_measurement/add_detection/add_monitor
+		## below (docs/notes/scripts_measurements_plotting.md §C.2).
+		self.descriptors = {}
+		## AI Generated -- [(label, Clock)] -- see subscribe_clock() below.
+		self.clock_subscriptions = []
 
 		self.auto_update_tables = False
 		self.auto_update_explogs = False
-		self.auto_update_df = False
 		self.tables = {}
 
+	@property
+	def df(self):
+		"""AI Generated -- lazy, cached pandas view over self.readings.
+		Rebuilt only when self._version has changed since the last build
+		(a new reading appended), never incrementally -- avoids the
+		classic pandas anti-pattern of growing a DataFrame one row at a
+		time via `.loc[len(df)] = row`, which is O(N^2) over a stream's
+		life. See docs/notes/scripts_measurements_plotting.md §C.1/§G.2."""
+		if self._df_cache_version != self._version:
+			self._df_cache = DataFrame(self.readings)
+			self._df_cache_version = self._version
+		return self._df_cache
 
-	def add_detection(self, key):
-		self.detections.append(key)
+	## AI Generated -- _add_field() below is the shared body for
+	## add_measurement/add_detection/add_monitor (§C.2's pros/cons --
+	## option (c): keep the three readable, self-documenting public
+	## names, kill the tripled body). No longer eagerly rebuilds a
+	## DataFrame here -- `.df` is the lazy property above now, so
+	## registering a field doesn't need to touch it at all.
+	def _add_field(self, key, kind, label=None, unit=None, unit_latex=None, description=None):
+		{"measurement": self.measurements, "detection": self.detections,
+		 "monitor": self.monitors}[kind].append(key)
 		self.datapoint[key] = Nan
-		self.df = DataFrame(columns=self.datapoint.keys())
-	
-	def add_measurement(self, key):
-		self.measurements.append(key)
-		self.datapoint[key] = Nan
-		self.df = DataFrame(columns=self.datapoint.keys())
-	
-	def add_monitor(self, key):
-		self.monitors.append(key)
-		self.datapoint[key] = Nan
-		self.df = DataFrame(columns=self.datapoint.keys())
+		self.descriptors[key] = {"label": label or key, "unit": unit,
+								  "unit_latex": unit_latex, "description": description, "kind": kind}
+
+	def add_detection(self, key, label=None, description=None):
+		self._add_field(key, "detection", label=label, description=description)
+
+	def add_measurement(self, key, label=None, unit=None, unit_latex=None, description=None):
+		self._add_field(key, "measurement", label=label, unit=unit, unit_latex=unit_latex, description=description)
+
+	def add_monitor(self, key, label=None, unit=None, unit_latex=None, description=None):
+		self._add_field(key, "monitor", label=label, unit=unit, unit_latex=unit_latex, description=description)
+
+	def subscribe_clock(self, clock, label=None):
+		"""AI Generated -- subscribe to one existing Clock -- deliberately
+		singular, no whole-ClockGroup form, so every addition to a stream
+		stays a visible, chosen decision rather than a bulk import (see
+		docs/notes/scripts_measurements_plotting.md §G.6). Every future
+		reading records this clock's elapsed time as a monitor field,
+		f"{label}_elapsed" -- unit "s" always, a Clock's own unit, never
+		asked of the caller."""
+		from core.idioms.clock import Clock
+		if not isinstance(clock, Clock):
+			raise TypeError(f"subscribe_clock() needs an existing Clock, got {type(clock)}")
+		label = label or f"clock_{len(self.clock_subscriptions)}"
+		self.clock_subscriptions.append((label, clock))
+		self.add_monitor(f"{label}_elapsed", unit="s", description=f"Elapsed time on the '{label}' clock")
 
 
 	def tabulate(self, *args, title=None):
@@ -144,14 +186,19 @@ class MeasurementStream:
 		return table
 
 
-	def plot(self, *args, title=None):
-		Plotter.show()
-	
+	## AI Generated -- the old first plot() definition here (`def
+	## plot(self, *args, title=None): Plotter.show()`) was dead code,
+	## silently shadowed by the real one further down (`plot(self, x, y,
+	## label="")`) since Python just keeps the last definition of a name
+	## in a class body -- and it would have raised AttributeError anyway
+	## (Plotter has no .show()). Removed rather than fixed; see
+	## docs/notes/scripts_measurements_plotting.md §B.1.
+
 	def __call__(self, **kwargs):
 		self.readings.append(deepcopy(self.advance()))
 		for k, v in dict(kwargs).items():
 			self.readings[-1][k] = v
-		
+
 		## Tables ----------------------------------------
 		if self.auto_update_tables:
 			for tab in self.tables:
@@ -165,11 +212,7 @@ class MeasurementStream:
 			Experiment_.current.logs["results"].append(dict(self.readings[-1]))
 			Experiment_.current.__save__()
 
-		## Dataframe update -------------------------------
-		if self.auto_update_df:
-			#self.df = pd.concat([pd.DataFrame([[1,2]], columns=df.columns), df], ignore_index=True)
-			#self.df = concat([self.df, DataFrame(self.readings[-1].values())], ignore_index=True)
-			self.df.loc[len(self.df)] = self.readings[-1]
+		self._version += 1  # AI Generated -- invalidates the .df cache; replaces the old eager .loc[] append
 		return self.readings[-1]
 
 	def measure(self, **kwargs):
@@ -181,6 +224,8 @@ class MeasurementStream:
 		self.datapoint["machinetime"] = time.time_ns()
 		self.datapoint["dt"] = datetime.datetime.now()
 		self.datapoint["measureidx"] = self.datapoint["measureidx"] + 1
+		for label, clock in self.clock_subscriptions:  # AI Generated
+			self.datapoint[f"{label}_elapsed"] = clock.read()
 		return self.datapoint
 	
 	def __repr__(self):

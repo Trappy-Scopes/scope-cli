@@ -16,7 +16,7 @@ def sys_perma_state():
 	ds =  {
 		   # Hardware/Raspberry Pi Settings
 		   "mac_address" : mac_str,
-		   "ip_address"  : gethostbyname(gethostname()),
+		   #"ip_address"  : gethostbyname(gethostname()),
 		   "hostname"    : gethostname(),
 		   "os"          : [platform.system(), platform.release()]
 		  }

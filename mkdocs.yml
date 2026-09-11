@@ -20,7 +20,8 @@ nav:
       - API Reference: optics/api.md
   - Notes:
       - Introduction: notes/assmble_trappy_scopes.md
-      - Hive: notes/hive.md       
+      - Restructuring plan: notes/restructuring.md
+      - Hive: notes/hive.md
       - Optics: notes/optics.md
       - Project Management: notes/projectman.md
       - Devices: notes/devices.md            

@@ -13,7 +13,7 @@ global calib_image
 calib_image = None
 
 
-from gui.fim import fim
+from core.utilities.fim import fim
 
 def create_calib_exp():
 	global exp

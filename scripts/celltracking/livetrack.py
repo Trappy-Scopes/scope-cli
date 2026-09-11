@@ -346,25 +346,25 @@ def track_sample(filename="sample_video.mjpeg", fps=25, time_s=3, no_processes=4
 def view_cells():
 	"""Visualise the generated plots using fim in terminal"""
 	paths = [os.path.join(__live_cell_save__path__, img) for img in ["detected_tracks.png", "detected_cells.png"]]
-	from gui.fim import fim
+	from core.utilities.fim import fim
 	fim(paths)
 
 def view_cells_trapped():
 	"""View tracked cells - step 0."""
 	paths = [os.path.join("trapped", img) for img in ["detected_tracks.png", "detected_cells.png"]]
-	from gui.fim import fim
+	from core.utilities.fim import fim
 	fim(paths)
 
 def view_cells_checkpoint1():
 	"""View checkpoint1 tracked cells - step 1."""
 	paths = [os.path.join("checkpoint1", img) for img in ["detected_tracks.png", "detected_cells.png"]]
-	from gui.fim import fim
+	from core.utilities.fim import fim
 	fim(paths)
 
 def view_cells_checkpoint2():
 	"""View checkpoint2 tracked cells - step 2."""
 	paths = [os.path.join("checkpoint2", img) for img in ["detected_tracks.png", "detected_cells.png"]]
-	from gui.fim import fim
+	from core.utilities.fim import fim
 	fim(paths)
 
 

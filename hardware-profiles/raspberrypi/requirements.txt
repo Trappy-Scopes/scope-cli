@@ -1,0 +1,9 @@
+# Tier 1a -- pip/uv-installable, Raspberry-Pi-relevant Python packages.
+# Installed via `uv pip install -r`, only when this profile is selected.
+#
+# Starting set; verify against actual sensor/actuator wiring before relying
+# on it -- not exercised against real GPIO hardware in this pass.
+gpiozero>=2.0
+rpi-lgpio>=0.6          # gpiozero's GPIO backend on recent Pi OS (Pi 5's
+                        # kernel driver moved away from RPi.GPIO's old model)
+smbus2>=0.4             # I2C, for onboard sensors

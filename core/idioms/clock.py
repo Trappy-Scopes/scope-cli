@@ -23,6 +23,13 @@ class Clock:
 		"""
 		return  self.offset + (time.perf_counter() - self.init_time)
 
+	def read(self):
+		"""AI Generated -- plain alias for time_elapsed(), added for
+		MeasurementStream.subscribe_clock() (docs/notes/
+		scripts_measurements_plotting.md §G.6) -- a Clock's own unit is
+		always seconds, so callers just call .read()."""
+		return self.time_elapsed()
+
 	def resume_time(self):
 		"""
 		Time since the clock was last resumed.

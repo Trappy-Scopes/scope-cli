@@ -1,18 +1,15 @@
 from rich import print
 import os
 import logging as log
-import asyncio
-import subprocess
 import platform
-import subprocess
 from concurrent.futures import ThreadPoolExecutor
 import time
 import datetime
 
 
 from core.uid import uid
-from core.permaconfig.sharing import Share
-from core.bookkeeping.user import User
+from core.permaconfig.config import TrappyConfig  # AI Generated -- Share/User imports removed, no longer used here (see template())
+import core.sync as sync
 
 class ExpSync:
 	"""
@@ -26,13 +23,20 @@ class ExpSync:
 	destination_fmt = None
 
 	def configure(scopeconfig):
-		ExpSync.active = scopeconfig["config"]["file_server"]["active"]
-		ExpSync.server = scopeconfig["config"]["file_server"]["server"]
-		ExpSync.share = scopeconfig["config"]["file_server"]["share"]
-		ExpSync.username = scopeconfig["config"]["file_server"]["username"]
-		ExpSync.password = scopeconfig["config"]["file_server"]["password"]
+		## `file_server` currently lives under `config:`; the target format
+		## is `Experiment.file_server` (docs/notes/restructuring.md §12 #4),
+		## not yet migrated.
+		block = TrappyConfig.optional_block(scopeconfig, "config", "file_server")
+		if block is None:
+			ExpSync.active = False
+			return
 
-		ExpSync.destination_fmt = scopeconfig["config"]["file_server"]["destination"]
+		ExpSync.active = True
+		ExpSync.server = block["server"]
+		ExpSync.share = block["share"]
+		ExpSync.username = block["username"]
+		ExpSync.password = block["password"]
+		ExpSync.destination_fmt = block["destination"]
 
 
 
@@ -64,22 +68,34 @@ class ExpSync:
 			if not os.path.exists(".sync"):
 				self.set_sync_logfile()
 					
-			date = Share.get_date_str()
-			time = Share.get_time_str()
-			user = User.name()
-			scopeid = Share.scopeid
+			## AI Generated -- effify() used to be defined inline right
+			## here; centralized onto TrappyConfig.template() (Claude,
+			## Anthropic) so any config field wanting this same
+			## "{date}"-style templating can reuse it instead of a second
+			## private copy. See docs/notes/scripts_measurements_plotting.md §G.10.
 
-			def effify(non_f_str: str, locals_):
-				return eval(f'f"""{non_f_str}"""', locals_)
-
+			## AI Generated -- destination_dir was computed fresh from
+			## today's date/time on every single open (Experiment.__init__
+			## looks for self.logs["destination_dir"] to reuse, but nothing
+			## ever wrote it back here), so a reconnect on a different day
+			## silently negotiated a brand new remote directory instead of
+			## reusing the one this experiment already has. Fixed: persist
+			## it, and log which of the two actually happened -- see
+			## docs/notes/experiment_architecture_and_actions.md §C.
+			reconnected = bool(destination_dir)
 			if not destination_dir:
-				self.mkexpdir(effify(ExpSync.destination_fmt, locals()), expname)
-				self.destination_dir = os.path.join(self.mount_addr, effify(ExpSync.destination_fmt, locals()), expname)
+				templated = TrappyConfig.current.template(ExpSync.destination_fmt)
+				self.mkexpdir(templated, expname)
+				self.destination_dir = os.path.join(self.mount_addr, templated, expname)
 			else:
 				self.destination_dir = destination_dir
 
 			if not os.path.exists(self.destination_dir):
 				raise FileNotFoundError("exp.destination_dir not found. Check experiment.yaml file.")
+
+			self.logs["destination_dir"] = self.destination_dir
+			self.log("sync_reconnected" if reconnected else "sync_destination_negotiated",
+					 attribs={"destination_dir": self.destination_dir})
 
 		## Background executor
 		self.__executor = ThreadPoolExecutor(max_workers=sync_max_threads)
@@ -120,47 +136,12 @@ class ExpSync:
 
 	def mount(self, server, share, username, password):
 		"""
-		Mount an SMB share at a specified mount point.
-		
-		:param server: SMB server address (e.g., 192.168.1.10)
-		:param share: SMB share name (e.g., shared_folder)
-		:param mount_point: Local directory to mount the share
-		:param username: SMB username
-		:param password: SMB password
+		Mount an SMB share. See core.sync.mount -- not experiment-specific,
+		so the actual mounting logic lives there.
 		"""
-		import platform
-
-		if platform.system() == "Linux":
-			log.debug("Plateform is Linux.")
-			mount_point = "/mnt"
-			mount_cmd = ["sudo", "mount", "-t", "cifs", f"//{server}/{share}", \
-						f"{mount_point}/{share}", "-m", "-o", \
-						f"username={username},password={password},rw,file_mode=0777,dir_mode=0777,uid=1000,gid=1000"]
-			try:
-				subprocess.run(mount_cmd, check=True)
-				print(f"Mounted //{server}/{share} at {mount_point}/{share}.")
-				time.sleep(5)
-			except Exception as e:
-				print(e)
-				if "error(16)" in str(e):
-					log.info("file_server is already mounted!")
-			print(f"{mount_point} dir for reference: ", os.listdir(mount_point))
-			self.server = f"{mount_point}/{share}/"
-		elif platform.system() == "Darwin":
-			log.debug("Plateform is Darwin (MacOS).")
-			try:
-				mount_point = "/Volumes"
-				mount_cmd = ["open", f"smb://{username}:{password}@{server}/{share}"]
-				subprocess.run(mount_cmd, check=True)
-				print(f"Mounted //{server}/{share} at {mount_point}/{share}.")
-				time.sleep(5)
-				print("/Volumes dir for reference: ", os.listdir("/Volumes"))
-				self.server = f"{mount_point}/{share}/"
-			except subprocess.CalledProcessError as e:
-				print(f"Error mounting SMB share: {e}")
-		else:
-			log.error("Unsupported plateform (os).")
-			return
+		mount_point = sync.mount(server, share, username, password)
+		print(f"Mounted //{server}/{share} at {mount_point}.")
+		self.server = f"{mount_point}/"
 
 	def sync_dir(self, remove_source=False):
 		"""
@@ -214,28 +195,28 @@ class ExpSync:
 		if delay_sec:
 			time.sleep(delay_sec)
 
-		source_removal = []
-		if remove_source:
-			source_removal.append('--remove-source-files')
-		try:
-			# Running rsync command
-			#ionice -c1 -n0 rsync -aW --inplace --no-compress /source/ /mnt/nas/
-
-			command = [
-				'sudo', 'ionice', '-c2', '-n4', 'rsync', '-aW', '--no-compress', '--inplace', *source_removal,
-				os.path.join(os.getcwd(), file),
-				os.path.join(self.destination_dir, file)
-			]
-			result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-			log.info(f"Rsync completed for {file}")
-			print(f"Rsync completed for {file}")
-			if remove_source:
-				with open(".sync", "a") as f:
-					f.write(f"{file}, {datetime.datetime.now()}\n")
-			return result.stdout.decode()
-		except subprocess.CalledProcessError as e:
-			log.error(f"Error occurred with {file}: {e.stderr.decode()}")
+		## -W --no-compress --inplace: large binary experiment files (video,
+		## images) don't benefit from rsync's delta-transfer algorithm or
+		## compression -- the whole-file copy is cheaper than the comparison
+		## overhead. ionice throttles I/O priority so this doesn't compete
+		## with a live experiment still writing to the same disk.
+		result = sync.sync(
+			os.path.join(os.getcwd(), file),
+			os.path.join(self.destination_dir, file),
+			flags=["-a", "-W", "--no-compress", "--inplace"],
+			remove_source=remove_source,
+			prefix=["sudo", "ionice", "-c2", "-n4"],
+		)
+		if result.returncode != 0:
+			log.error(f"Error occurred with {file}: {result.stderr.strip()}")
 			return None
+
+		log.info(f"Rsync completed for {file}")
+		print(f"Rsync completed for {file}")
+		if remove_source:
+			with open(".sync", "a") as f:
+				f.write(f"{file}, {datetime.datetime.now()}\n")
+		return result.stdout
 
 
 

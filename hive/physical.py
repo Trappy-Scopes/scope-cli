@@ -28,7 +28,15 @@ class PhysicalObject(object):
 		self.params = self.attribs  ## Aliased
 
 		if persistent:
-			state = shelve.open(os.path.join(os.path.expanduser("~"), name))
+			## Lives under trappyverse/ (not directly in the home directory) so
+			## that syncing the trappyverse folder to the config server (see
+			## docs/notes/restructuring.md §7.2) actually backs this up. Moved
+			## 2026-09-05 -- a shelve from before this change, sitting at
+			## ~/<name>, is not picked up automatically; move it by hand under
+			## trappyverse/state/ if it needs to survive.
+			statedir = os.path.join(os.path.expanduser("~"), "trappyverse", "state")
+			os.makedirs(statedir, exist_ok=True)
+			state = shelve.open(os.path.join(statedir, name))
 
 			## Current should override state
 			for key, value in self.attribs.items():
