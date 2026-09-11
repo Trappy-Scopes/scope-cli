@@ -59,9 +59,10 @@ from hive.rpycserver import RpycServer
 from hive.laboratory import Lab
 from hive.processorgroups.micropython import SerialMPDevice
 
-from utilities.fluff import pageheader, intro
-from utilities.codeviewer import codeviewer
-from utilities.keyboard_shortcuts import bind_shortcuts
+from core.utilities.fluff import pageheader, intro
+from core.utilities.codeviewer import codeviewer
+from core.utilities.keyboard_shortcuts import bind_all
+from core.utilities.repl_history import enable as enable_history_logging, disable as disable_history_logging
 
 from .. import useractions
 
@@ -83,12 +84,10 @@ def build(config):
 	og_directory = os.getcwd()
 
 	## Device ID and metadata --------------------------------------------
-	### Depreciate
-	if device_metadata["config"]["set_wallpaper"]:
-		from utilities.wallpaper import generate_wallpaper, def_wallpaper_path
-		generate_wallpaper(device_metadata)
-		os.system(f"pcmanfm --wallpaper-mode=fit --set-wallpaper {def_wallpaper_path}")
-
+	## Wallpaper generation now happens at the launcher level (see
+	## launcher/utilities/launch_normally.py) -- it reads config the same
+	## way the launcher's other pre-flight steps do, before this recipe
+	## (or any other startup_recipie) ever runs.
 	scopeid = device_metadata["name"]
 	Share.scopeid = scopeid
 
@@ -113,8 +112,10 @@ def build(config):
 	for i in range(1, 5):
 		print(Rule(characters='═', style=f"rgb({int(255/i)},{int(255/i)},0)"),  end='')
 
-	## Bind keyboard shortcuts for scope devices (e.g. Esc, s, n -> scope.node)
-	bind_shortcuts(scope)
+	## Bind keyboard shortcuts -- config.keyboard_shortcuts (inline/file),
+	## scope devices (e.g. Esc, s, n -> scope.node), and the Experiment
+	## member table, per config.keyboard_shortcuts.{scope_assembly,experiment}.
+	bind_all(scope, config)
 
 	## List experiments ----------------------------------------------------
 	exppanel = Table("#.", "EID", "Experiment", box=False, show_lines=True, title_style="blink2")
@@ -156,6 +157,13 @@ def build(config):
 	namespace.update({
 		k: v for k, v in vars(useractions).items() if not k.startswith("_")
 	})
+	## AI Generated -- enable_history_logging/disable_history_logging are module-level
+	## imports here (not locals of build()), so the locals() sweep above
+	## doesn't pick them up on its own -- added explicitly so a user can
+	## call enable_history_logging() directly at the REPL (see
+	## utilities.repl_history and Esc,e,l in keyboard_shortcuts.py).
+	namespace["enable_history_logging"] = enable_history_logging
+	namespace["disable_history_logging"] = disable_history_logging
 
 	## Scripts must run as if they were the main program, so their
 	## `if __name__ == "__main__":` blocks fire. When startup was exec()-ed,

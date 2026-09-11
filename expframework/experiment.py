@@ -15,7 +15,7 @@ import pickle
 import atexit
 
 from rich import print
-from rich.progress import track
+from rich.progress import Progress
 from rich.text import Text
 from rich.prompt import Prompt
 from rich.rule import Rule
@@ -24,7 +24,7 @@ from rich.panel import Panel
 from rich.pretty import Pretty
 
 
-from utilities.resolvetypes import resolve_type
+from core.utilities.resolvetypes import resolve_type
 
 from core.permaconfig.config import TrappyConfig
 
@@ -38,6 +38,7 @@ from core.exceptions import TS_InvalidNameException
 from core.tsevents import TSEvent
 from core.idioms.clock import Clock
 from core.permaconfig.yaml_logger import create_yaml_logger, close_yaml_logger
+from core.idioms.recordeditor import RecordSet
 
 from .report import ExpReport
 from .expsync import ExpSync
@@ -59,6 +60,24 @@ class ExpEvent(TSEvent):
 ExperimentEvent = ExpEvent
 
 
+class _LoggingJob(schedule.Job):
+	"""AI Generated -- a schedule.Job that logs itself the moment it's
+	actually registered (do() is the one real commitment point in the
+	`schedule` library -- every()/at()/etc. just build up an unscheduled
+	Job first), replacing the old post_register() idiom that required a
+	scientist to remember a separate call after every .do(...) -- in
+	practice, across every script this codebase's scripts/ directory has,
+	exactly one ever did. See docs/notes/experiment_architecture_and_actions.md §D."""
+	def do(self, job_func, *args, **kwargs):
+		job = super().do(job_func, *args, **kwargs)
+		if Experiment.current is not None:
+			Experiment.current.log("periodic_task_registered", attribs={
+				"name": getattr(job_func, "__name__", str(job_func)),
+				"interval": self.interval, "unit": self.unit,
+			})
+		return job
+
+
 class ExpScheduler(schedule.Scheduler):
 	def __init__(self):
 		super().__init__()
@@ -66,9 +85,13 @@ class ExpScheduler(schedule.Scheduler):
 		self.end_thread = False
 		self.loop()
 
-	def post_register(self, name):
-		Experiment.current.log("periodic_task", 
-			attribs={"name": name, "info": str(self.get_jobs()[-1])})
+	def every(self, interval=1):
+		"""AI Generated -- returns a _LoggingJob instead of a bare
+		schedule.Job, so every exp.schedule.every(...).do(...) call logs
+		its own registration automatically. post_register() is retired --
+		its whole reason for existing is now handled at the source."""
+		return _LoggingJob(interval, self)
+
 	def loop(self):
 		def callback():
 			while not self.end_thread:
@@ -149,9 +172,19 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 	#####SINGLETON#####
 
 
-	def new(name, append_eid=False):
+	def new(name, append_eid=False, data_dir=None):
 		"""
 		Create a new experiment with the given name.
+
+		data_dir: AI Generated -- override for where this experiment's
+		directory tree gets created. Defaults to Experiment.exp_dir, same
+		as always; CalibrationExperiment passes its own calibration_dir
+		here explicitly (see expframework/calibration.py) rather than
+		through polymorphism -- new()/list_all() are plain functions
+		called via the class (Experiment.new(...), not self.new(...)),
+		not real instance/classmethods, so a subclass overriding them
+		would never actually get dispatched to from here; an explicit
+		parameter sidesteps that rather than restructuring it.
 		"""
 
 		uuid = uid()
@@ -159,8 +192,12 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 		if append_eid:
 			name = name + "_" + uuid
 
-
-		dir_ = os.path.join(os.path.expanduser(TrappyConfig.current["config"]["expdir"].get()), name)
+		# AI Generated -- was TrappyConfig.current["config"]["expdir"], an
+		# undocumented key with no schema default; now reads the real,
+		# documented Experiment.exp_dir (2026-09-09).
+		if data_dir is None:
+			data_dir = TrappyConfig.current.leaf("Experiment", "exp_dir")
+		dir_ = os.path.join(os.path.expanduser(data_dir), name)
 		os.mkdir(dir_)
 		os.mkdir(os.path.join(dir_, "postprocess"))
 		os.mkdir(os.path.join(dir_, "analysis"))
@@ -194,7 +231,7 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 		"""
 		Returns a list of the fullpath of all qualified experiments.
 		"""
-		data_dir = os.path.expanduser(TrappyConfig.current["config"]["expdir"].get())
+		data_dir = os.path.expanduser(TrappyConfig.current.leaf("Experiment", "exp_dir"))  # AI Generated -- see Experiment.new()
 		all_dirs = os.listdir(data_dir)
 		all_dirs = [os.path.join(data_dir, dir_) for dir_ in all_dirs if \
 			os.path.isfile(os.path.join(data_dir, dir_, ".experiment"))]
@@ -262,6 +299,15 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 		
 
 
+	def _data_dir(self):
+		"""AI Generated -- where this experiment's own directory lives.
+		A real instance method (unlike new()/list_all(), which are plain
+		functions called via the class), so a subclass genuinely
+		overrides this via normal polymorphism -- CalibrationExperiment
+		(expframework/calibration.py) does exactly that, resolving
+		Experiment.calibration_dir first."""
+		return TrappyConfig.current.leaf("Experiment", "exp_dir")
+
 	def __init__(self, name, append_eid=False, **kwargs):
 		"""
 		Create an experiment.
@@ -291,9 +337,9 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 
 		# Check if the experiment exists -> a sanatised and valid name is guaranted
 		# to pass through and will always be recovered.
-		data_dir = os.path.expanduser(TrappyConfig.current["config"]["expdir"].get())
+		data_dir = os.path.expanduser(self._data_dir())  # AI Generated -- see _data_dir()/Experiment.new()
 		if not os.path.join(data_dir, self.name) in all_exps:
-			self.name = Experiment.new(self.name, append_eid=append_eid)
+			self.name = Experiment.new(self.name, append_eid=append_eid, data_dir=self._data_dir())
 			log.info(f"Creating new experiment: {self.name}")
 
 		self.exp_dir = os.path.join(data_dir, self.name)
@@ -351,6 +397,7 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 
 		## Open logger after cchanging directory
 		self.logger = create_yaml_logger("logs.yaml")
+		self._edit_logger = None  # AI Generated -- created lazily, see _log_edit(); most experiments never edit an event
 
 
 		## User Information
@@ -514,6 +561,8 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 		
 		print("Closing logger.")
 		close_yaml_logger("logs.yaml", self.logger)
+		if self._edit_logger is not None:  # AI Generated
+			close_yaml_logger("event_edits.yaml", self._edit_logger)
 
 		Experiment.current = None
 		if self.active:
@@ -606,8 +655,77 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 	def log(self, event, attribs={}):
 		self.logs["events"].append(dict(ExpEvent(kind=event, attribs=attribs)))
 
+	## AI Generated -- events()/recordset()/measurements()/_log_edit()
+	## below, added by Claude (Anthropic) 2026-09-08/09 for the
+	## event-editing feature. See docs/notes/protocols.md §8 and
+	## docs/notes/experiment_architecture_and_actions.md.
 	def events(self):
-		return list(self.logs.keys())
+		"""The plain event log -- the old idiom, restored: just the list,
+		no wrapping. For filtering/editing/tabulating it, use
+		recordset() instead."""
+		return self.logs["events"]
+
+	## AI Generated -- ExpEvent.__init__ (below) calls super().__init__()
+	## with no arguments, so the `attribs` it receives never actually
+	## reaches TSEvent's own "attribs" slot (which stays permanently {})
+	## -- self.update(attribs) instead merges it straight onto the
+	## event's top level. Confirmed against a real logged event, not
+	## assumed. So the real, user-supplied fields on any event
+	## (name/duration/note/label/...) live at the top level, not nested
+	## under "attribs" -- container_path=() below, with an explicit
+	## deny-list of the system-computed fields (plus "attribs" itself,
+	## which is always {} and never worth touching), matches that reality
+	## instead of an aspirational nesting that was never actually true.
+	## Yatharth is reviewing the Event classes themselves separately --
+	## REMIND HIM OF THIS before the next audit.
+	_EVENT_SYSTEM_FIELDS = frozenset({
+		"type", "scopeid", "mid", "sid", "dt", "sessiontime", "machinetime",
+		"eid", "scriptid", "exptime", "attribs",
+	})
+
+	def recordset(self):
+		"""A core.idioms.recordeditor.RecordSet over this experiment's own
+		event log -- editing through it only ever reaches each event's
+		real, user-supplied fields, never the system-computed ones (dt,
+		machinetime, eid, ... -- see _EVENT_SYSTEM_FIELDS just above for
+		exactly why this isn't attribs-scoped), and persists via
+		__save__() same as everything else here (see
+		docs/notes/protocols.md §2/§8 for why that's enough --
+		__save__() re-dumps self.logs whole every time). Split out from
+		events() (which now just returns the plain list again) so a
+		caller wanting the heavier, editable view asks for it explicitly."""
+		return RecordSet(self.logs["events"], denied_fields=self._EVENT_SYSTEM_FIELDS,
+						  on_change=self.__save__, on_edit=self._log_edit)
+
+	def measurements(self):
+		"""A RecordSet over this experiment's own measurement results --
+		only "success" is editable here, on request (a measurement's
+		actual recorded values shouldn't be touched after the fact)."""
+		return RecordSet(self.logs["results"], allowed_fields={"success"},
+						  on_change=self.__save__, on_edit=self._log_edit)
+
+	def _log_edit(self, record, changed):
+		"""Append one entry to event_edits.yaml (created on first use) --
+		a record's own edit trail lives in a separate file rather than
+		inline in experiment.yaml, so editing never changes that file's
+		shape (see docs/notes/protocols.md §8). Reuses the same
+		create_yaml_logger() mechanism as logs.yaml/repl_history.yaml.
+		Gated by config.Experiment.record_edit_history (default True) --
+		checked here, not inside RecordSet itself, so RecordSet stays
+		config-agnostic and reusable outside Experiment."""
+		if not TrappyConfig.current.leaf("Experiment", "record_edit_history"):
+			return
+		if not hasattr(self, "_edit_logger") or self._edit_logger is None:
+			import logging as _logging
+			edit_logger = _logging.getLogger(f"event_edits.{self.eid}")
+			edit_logger.setLevel(_logging.INFO)  # else inherits root's WARNING and .info() is dropped
+			edit_logger.propagate = False         # never bubble into root / error_collector
+			self._edit_logger = create_yaml_logger("event_edits.yaml", logger=edit_logger)
+		self._edit_logger.info("record_edited", extra={
+			"record_type": record.get("type"),
+			"record_dt": record.get("dt"),
+			"changed": changed,
+		})
 
 	def log_event(self, string, attribs={}):
 		"""
@@ -716,23 +834,35 @@ class Experiment(ExpSync, ExpReport, ExpNotebook, ClockGroup):
 	
 	@is_event
 	@autosave
-	def delay(self, name, seconds, steps=100):
+	def delay(self, name, seconds):
 		"""
-		Add a experiment step dealy with a progress bar and automatic logging.
-		Todo: Correct processor drift.
+		AI Generated -- rewritten to use core.idioms.precisetiming.precise_sleep
+		(PsychoPy's drift-free wait pattern) instead of the old subdivided
+		time.sleep(seconds/steps) loop, which accumulated OS scheduling
+		jitter across every step instead of measuring real elapsed time --
+		drifting rather than correcting drift, despite this method's own
+		former `Todo: Correct processor drift.` comment. See
+		docs/notes/experiment_architecture_and_actions.md §E/§F.
+
+		Still shows a progress bar and logs the same event shape as
+		before; the bar is now driven by measured elapsed time
+		(precise_sleep's on_tick), not by counting loop iterations, so it
+		no longer has any bearing on the actual wait's precision.
 		"""
+		from core.idioms.precisetiming import precise_sleep
 		interrupted = False
 		start = time.time_ns()
-		print(start)
-		try:
-			for i in track(range(steps), description=f"exp-step: blocking delay: [red]{name}[default] | [cyan]{seconds}s[default] >> "):
-			    time.sleep(seconds/steps)  # Simulate work being done
-		except KeyboardInterrupt:
-			interrupted = True
-			print(f"[red]Dealy interrupted @ {((time.time_ns()-start)*10**-9):3f}/{seconds}")
+		with Progress() as progress:
+			task = progress.add_task(
+				f"exp-step: blocking delay: [red]{name}[default] | [cyan]{seconds}s[default] >> ",
+				total=seconds)
+			try:
+				precise_sleep(seconds, on_tick=lambda elapsed: progress.update(task, completed=elapsed))
+			except KeyboardInterrupt:
+				interrupted = True
+				print(f"[red]Delay interrupted @ {((time.time_ns()-start)*10**-9):.3f}/{seconds}")
 		self.log("delay", attribs={"name":name, "duration":seconds, "start_ns":start,
 				 "end_ns": time.time_ns(), "interrupted": interrupted})
-		print(time.time_ns())
 
 	
 	@is_event

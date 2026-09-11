@@ -8,9 +8,7 @@ import datetime
 
 
 from core.uid import uid
-from core.permaconfig.sharing import Share
-from core.permaconfig.config import TrappyConfig
-from core.bookkeeping.user import User
+from core.permaconfig.config import TrappyConfig  # AI Generated -- Share/User imports removed, no longer used here (see template())
 import core.sync as sync
 
 class ExpSync:
@@ -70,22 +68,34 @@ class ExpSync:
 			if not os.path.exists(".sync"):
 				self.set_sync_logfile()
 					
-			date = Share.get_date_str()
-			time = Share.get_time_str()
-			user = User.name()
-			scopeid = Share.scopeid
+			## AI Generated -- effify() used to be defined inline right
+			## here; centralized onto TrappyConfig.template() (Claude,
+			## Anthropic) so any config field wanting this same
+			## "{date}"-style templating can reuse it instead of a second
+			## private copy. See docs/notes/scripts_measurements_plotting.md §G.10.
 
-			def effify(non_f_str: str, locals_):
-				return eval(f'f"""{non_f_str}"""', locals_)
-
+			## AI Generated -- destination_dir was computed fresh from
+			## today's date/time on every single open (Experiment.__init__
+			## looks for self.logs["destination_dir"] to reuse, but nothing
+			## ever wrote it back here), so a reconnect on a different day
+			## silently negotiated a brand new remote directory instead of
+			## reusing the one this experiment already has. Fixed: persist
+			## it, and log which of the two actually happened -- see
+			## docs/notes/experiment_architecture_and_actions.md §C.
+			reconnected = bool(destination_dir)
 			if not destination_dir:
-				self.mkexpdir(effify(ExpSync.destination_fmt, locals()), expname)
-				self.destination_dir = os.path.join(self.mount_addr, effify(ExpSync.destination_fmt, locals()), expname)
+				templated = TrappyConfig.current.template(ExpSync.destination_fmt)
+				self.mkexpdir(templated, expname)
+				self.destination_dir = os.path.join(self.mount_addr, templated, expname)
 			else:
 				self.destination_dir = destination_dir
 
 			if not os.path.exists(self.destination_dir):
 				raise FileNotFoundError("exp.destination_dir not found. Check experiment.yaml file.")
+
+			self.logs["destination_dir"] = self.destination_dir
+			self.log("sync_reconnected" if reconnected else "sync_destination_negotiated",
+					 attribs={"destination_dir": self.destination_dir})
 
 		## Background executor
 		self.__executor = ThreadPoolExecutor(max_workers=sync_max_threads)

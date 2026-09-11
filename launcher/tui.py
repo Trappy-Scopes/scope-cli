@@ -1,4 +1,7 @@
 """
+AI Generated -- substantially rewritten by Claude (Anthropic), 2026-09
+(Install/setup submenu redesign, centered Align/Padding-based rendering).
+
 The interactive launcher: `trappyscope --launcher`.
 
 A small block in the middle of the screen -- the animation, a title line,
@@ -30,8 +33,10 @@ import termios
 import time
 import tty
 
+from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
+from rich.padding import Padding
 from rich.text import Text
 
 from . import chlamy_dance as dance
@@ -57,15 +62,18 @@ CONFIGURATION_MENU_ITEMS = [
 	("check", "Check configuration file"),
 	("sync", "Sync configuration file"),
 	("edit", "Edit the configuration file"),
+	("migrate", "Migrate legacy config/state"),
 	("back", "< Back"),
 ]
 
 INSTALL_MENU_ITEMS = [
-	("check_venv", "Check virtual environment"),
-	("check_config", "Check configuration file"),
-	("install_packages", "Install packages + hardware profiles"),
+	("check_venv", "1. Check virtual environment"),
+	("check_config", "2. Create configuration file"),
+	("install_packages", "3. Install packages + hardware profiles"),
+	("append_config", "Create additional configuration file"),
 	("check_scripts_all", "Check all scripts' dependencies"),
 	("check_scripts_one", "Check a specific script"),
+	("check_new_features", "Check new features are configured"),
 	("back", "< Back"),
 ]
 
@@ -205,38 +213,7 @@ def _venv_line():
 	return line
 
 
-def _left_pad_lines(text, pad):
-	"""Prepend `pad` spaces to every line of a (possibly multi-line,
-	possibly styled) Text, preserving each line's own style spans."""
-	if pad <= 0:
-		return text
-	padded = Text()
-	for i, line in enumerate(text.split("\n")):
-		if i > 0:
-			padded.append("\n")
-		padded.append(" " * pad)
-		padded.append_text(line)
-	return padded
-
-
-def _renderable_to_text(renderable, width):
-	"""
-	Render any Rich renderable (e.g. a Table) to a plain multi-line Text --
-	the left-padding trick _render() uses to centre the chlamy animation
-	only works on a Text (split("\\n") + append_text), not an arbitrary
-	renderable, so this is the conversion step for anything passed as
-	_show_menu()'s `content` in place of the animation. force_terminal=True
-	is what makes capture() actually emit ANSI codes instead of stripping
-	them (verified directly: without it, a captured Table's own styling --
-	e.g. a colored column -- is lost).
-	"""
-	capture_console = Console(width=width, force_terminal=True, no_color=False)
-	with capture_console.capture() as cap:
-		capture_console.print(renderable)
-	return Text.from_ansi(cap.get().rstrip("\n"))
-
-
-def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_line=None, content=None):
+def _render(menu, elapsed, version=None, venv_line=None, extra_line=None, content=None):
 	if content is not None:
 		## Replaces the animation entirely -- e.g. the repository picker's
 		## status table -- rather than showing both. Centred the same way,
@@ -266,11 +243,10 @@ def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_li
 	split = (len(entries) + 1) // 2
 	left, right = entries[:split], entries[split:]
 
-	## Fixed widths, computed from the *whole* item list rather than just
+	## Fixed width, computed from the *whole* item list rather than just
 	## the visible window, so the column boundaries don't shift as the menu
 	## scrolls.
 	col_width = max(len(label) for _, label in menu.items) + 2  # +2: the "> "/"  " prefix
-	row_width = col_width + 4 + col_width  # 4: the gap between columns
 
 	def entry_style(key, i):
 		if i == menu.index:
@@ -297,44 +273,34 @@ def _render(menu, elapsed, console_width, version=None, venv_line=None, extra_li
 	if more_below:
 		scroll_hints.append("↓ more below")
 
-	## Align.center does NOT reliably centre this composition: it centres
-	## each rendered *line* independently, based on that line's own visible
-	## width -- and, verified directly, that measurement strips trailing
-	## whitespace first. A menu row right-padded to a uniform total length
-	## (the previous attempt at this fix) therefore still measures as
-	## whatever text precedes the padding, which differs row to row, so
-	## Align lands each row at a different offset regardless. The animation
-	## (every row a fixed 39 characters, no trailing-whitespace ambiguity)
-	## and the header/hint Texts (self-centering via their own justify=
-	## "center", independent of Align) happened to look right before the
-	## menu had rows of very different lengths -- which is exactly why this
-	## surfaced only once the menu went two columns wide.
-	##
-	## Fixed here by computing the centering offset once, from the actual
-	## live terminal width, and left-padding the animation and menu block
-	## ourselves -- no Align involved for either. The header/hint Texts
-	## keep their own justify="center" (self-centering against the full
-	## console width, verified to work with no Align wrapper at all): since
-	## the manually-centered block's own midpoint is put at console_width/2
-	## by construction, both approaches land on the same centerline.
-	## The animation's own width is computed rather than assumed as
-	## dance.W, so an arbitrary `content` (a table, say) centres by
-	## exactly the same rule -- its own widest rendered line -- with no
-	## special-casing needed here for which one is actually showing.
-	animation_width = max((len(line) for line in animation.plain.split("\n")), default=0)
-	content_width = max(animation_width, row_width)
-	pad = max(0, (console_width - content_width) // 2)
-
-	animation = _left_pad_lines(animation, pad)
-	menu_lines = _left_pad_lines(menu_lines, pad)
-
 	body = [animation, Text(), *header, Text(), menu_lines]
 	if scroll_hints:
 		body.append(Text("   ".join(scroll_hints), style="dim", justify="center"))
 	body.append(Text())
 	body.append(Text("↑/↓ move   enter select   Esc/q quit", style="dim", justify="center"))
 
-	return Group(*body)
+	## Align.center does NOT reliably centre a bare multi-line Group: it
+	## centres each rendered *line* independently, based on that line's
+	## own visible width -- and, verified directly, that measurement
+	## strips trailing whitespace first. A menu row right-padded to a
+	## uniform total length (an earlier attempt at this fix) therefore
+	## still measures as whatever text precedes the padding, which
+	## differs row to row, so Align lands each row at a different offset
+	## regardless -- this is what broke once the menu went two columns
+	## wide, and again once `content` grew rows of very different lengths
+	## (the Install/setup status panel).
+	##
+	## The fix: wrapping the whole Group in Padding(..., 0) first gives
+	## Align a single renderable whose __rich_measure__ reports ONE
+	## overall width for the whole block, rather than measuring line by
+	## line -- so every line gets the same offset. Verified directly
+	## against exactly the failure case above (a two-column menu with
+	## rows of different lengths, plus a Table with box-drawing borders):
+	## every row lands at the correct, identical column. This also means
+	## an arbitrary `content` renderable (a Table, say) can be passed
+	## straight through with no ANSI-capture conversion step first --
+	## Align/Padding render it natively.
+	return Align.center(Padding(Group(*body), 0))
 
 
 def _show_menu(items=None, extra_line=None, content=None):
@@ -350,7 +316,8 @@ def _show_menu(items=None, extra_line=None, content=None):
 	`content`, if given, replaces the chlamy animation entirely -- the
 	repository picker uses this to show its status table centred in the
 	same place the animation would otherwise be, rather than printing it
-	separately above an unrelated animation (see _renderable_to_text()).
+	separately above an unrelated animation. Any renderable works --
+	Align/Padding in _render() render it natively, no conversion needed.
 
 	Recomputes the version line fresh on every call rather than once for
 	the whole launcher session: a micro-utility run in between (repository
@@ -368,14 +335,14 @@ def _show_menu(items=None, extra_line=None, content=None):
 	old_settings = termios.tcgetattr(fd)
 	try:
 		tty.setcbreak(fd)
-		with Live(_render(menu, 0, console.width, version, venv_line, extra_line, content), console=console, screen=False,
+		with Live(_render(menu, 0, version, venv_line, extra_line, content), console=console, screen=False,
 				  auto_refresh=False, transient=True) as live:
 			while True:
-				## console.width read fresh every frame, not cached from
-				## before the loop started -- a resized terminal window
-				## must recentre on the next frame, not stay centered for
-				## whatever size the window happened to be at launch.
-				live.update(_render(menu, time.monotonic() - start, console.width, version, venv_line, extra_line, content),
+				## No explicit width to thread through any more -- Align.
+				## center() re-measures against whatever console it's
+				## actually printed into at update() time, so a resized
+				## terminal window recentres on its own on the next frame.
+				live.update(_render(menu, time.monotonic() - start, version, venv_line, extra_line, content),
 							refresh=True)
 
 				ready, _, _ = select.select([fd], [], [], 1 / FPS)
@@ -437,9 +404,22 @@ def _select_device():
 
 
 def _device_line(port):
+	""""Device: <port>" (green) if one's selected; otherwise distinguishes
+	*why* not -- "(no devices found)" when there's genuinely nothing to
+	pick from, vs "(none selected -- each action will prompt)" when
+	candidates exist but weren't chosen (backed out of the picker). These
+	collapsed into one message at some point -- misleading in the no-
+	candidates case, which reads as if retrying would offer a choice."""
 	line = Text("Device: ", justify="center")
-	line.append(port if port else "(none selected -- each action will prompt)",
-				style="green" if port else "yellow")
+	if port:
+		line.append(port, style="green")
+		return line
+
+	from core.idioms import devicetree
+	if devicetree.micropython_candidates():
+		line.append("(none selected -- each action will prompt)", style="yellow")
+	else:
+		line.append("(no devices found)", style="yellow")
 	return line
 
 
@@ -500,13 +480,14 @@ def _show_configuration_menu():
 	the simpler shape _show_micropython_menu() itself used before device
 	selection was added.
 	"""
-	from .utilities import check_config, edit_config, sync_config
+	from .utilities import check_config, edit_config, migrate_legacy, sync_config
 	from rich.prompt import Confirm
 
 	CONFIGURATION_UTILITIES = {
 		"check": check_config.check,
 		"sync": sync_config.sync_trappyverse,
 		"edit": edit_config.edit,
+		"migrate": migrate_legacy.migrate,
 	}
 
 	while True:
@@ -521,35 +502,78 @@ def _show_configuration_menu():
 			return
 
 
+def _install_status_content():
+	"""
+	Replaces the chlamy animation for this submenu (see _render()'s
+	`content` param) with instructions instead: the three necessary setup
+	steps, numbered, each with a green/red dot for whether it's actually
+	done on this machine right now -- not just a flat list of menu items
+	with no indication of where you stand. Recomputed fresh every time
+	this submenu (re)draws, the same way _version_line()/_venv_line() are,
+	so running e.g. "Install packages" and returning here shows the dot
+	flip immediately rather than a stale status from before.
+	"""
+	from .utilities import check_config, check_venv, installer
+
+	steps = [
+		("1", "Check virtual environment", check_venv.status),
+		("2", "Create configuration file", check_config.status),
+		("3", "Install packages + hardware profiles", installer.status),
+	]
+
+	body = Text()
+	body.append("Install / setup -- do these three in order:\n\n", style="bold")
+	for num, label, status_fn in steps:
+		ready, detail = status_fn()
+		body.append(f"  {num}. ")
+		body.append("● ", style="green" if ready else "red")
+		body.append(label)
+		body.append(f"  -- {detail}\n", style="dim")
+
+	body.append("\nOnce these three are done, set up your MicroPython devices\n"
+				 'from the "MicroPython >" menu.\n', style="dim")
+	body.append("\nOptional, any time:\n", style="dim italic")
+	body.append("  Create additional configuration file (e.g. a shared lab manifest)\n"
+				 "  Check all/one script's dependencies\n"
+				 "  Check new features (MicroPython, repos) are configured\n", style="dim")
+
+	return body
+
+
 def _show_install_menu():
 	"""
-	The "Install / setup >" submenu -- Check virtual environment / Check
-	configuration file / Install packages + hardware profiles / Check
-	scripts' dependencies. Same submenu mechanism as Configuration/
-	MicroPython/Repository utility -- each item independent, run in any
-	order, any number of times, rather than a linear wizard.
+	The "Install / setup >" submenu -- Check virtual environment / Create
+	configuration file / Install packages + hardware profiles, numbered as
+	the three necessary steps (see _install_status_content()), plus a
+	handful of optional checks/utilities below them. Same submenu
+	mechanism as Configuration/MicroPython/Repository utility -- each item
+	independent, run in any order, any number of times, rather than a
+	linear wizard -- the numbering and status dots are guidance, not
+	enforcement.
 
 	This is the actual fix for "Install / setup" going straight into
 	`pip install -e .` with no way to back out or check anything first:
-	that's now its own explicit item (install_packages), and the three
-	pre-flight checks that used to not exist at all -- does the declared
+	that's now its own explicit item (install_packages), and the pre-
+	flight checks that used to not exist at all -- does the declared
 	config.venv actually exist, does trappyconfig.yaml exist, do the
 	scripts under Experiment.scripts_dirs have their imports satisfied --
 	are separate items here instead.
 	"""
-	from .utilities import check_config, check_scripts, check_venv, installer
+	from .utilities import append_config, check_config, check_new_features, check_scripts, check_venv, installer
 	from rich.prompt import Confirm
 
 	INSTALL_UTILITIES = {
 		"check_venv": check_venv.check,
 		"check_config": check_config.check,
 		"install_packages": installer.install,
+		"append_config": append_config.create,
 		"check_scripts_all": check_scripts.check_all,
 		"check_scripts_one": check_scripts.check_specific,
+		"check_new_features": check_new_features.check,
 	}
 
 	while True:
-		choice = _show_menu(INSTALL_MENU_ITEMS)
+		choice = _show_menu(INSTALL_MENU_ITEMS, content=_install_status_content())
 
 		if choice is None or choice == "back":
 			return
@@ -563,14 +587,16 @@ def _show_install_menu():
 def _show_repo_menu():
 	"""
 	The "Repository utility >" submenu -- shows the status table centred
-	in place of the animation (see _render()'s `content` parameter and
-	_renderable_to_text()), with a menu below it to pick ONE repo to
-	pull -- no separate animation, and no disconnected plain-printed
-	table above an unrelated menu. Repos come from repo_sync.all_repos()
-	every time this redraws (not a static item list, unlike MicroPython/
-	Configuration's fixed menus), which now includes trappyscopes' own
-	repo alongside config.git_dependencies -- previously the one repo
-	this tool had no update option for at all.
+	in place of the animation (see _render()'s `content` parameter), with
+	a menu below it to pick ONE repo to pull -- no separate animation, and
+	no disconnected plain-printed table above an unrelated menu. Repos
+	come from repo_sync.all_repos() every time this redraws (not a static
+	item list, unlike MicroPython/Configuration's fixed menus), which now
+	includes trappyscopes' own repo alongside config.git_dependencies --
+	previously the one repo this tool had no update option for at all.
+
+	The Table is passed straight through as `content` -- Align/Padding
+	render any renderable natively, no ANSI-capture conversion needed.
 
 	Pulling redraws with a freshly rebuilt table before the menu appears
 	again, rather than pulling everything behind at once with no way to
@@ -588,10 +614,9 @@ def _show_repo_menu():
 			console.print("[yellow]No repositories declared in config.git_dependencies.[/yellow]")
 			return
 		table, statuses = repo_sync.status_table(repos)
-		table_text = _renderable_to_text(table, console.width)
 
 		items = [(label, label) for label in repos] + [("back", "< Back")]
-		choice = _show_menu(items, content=table_text)
+		choice = _show_menu(items, content=table)
 
 		if choice is None or choice == "back":
 			return

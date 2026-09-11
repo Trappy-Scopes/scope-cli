@@ -68,7 +68,7 @@ MODES = {
 
 
 def sync(source, destination, mode="update", flags=None, compress=False,
-		 dry_run=False, excludes=(), remove_source=False, prefix=()):
+		 dry_run=False, excludes=(), remove_source=False, prefix=(), itemize=False):
 	"""
 	Run rsync from `source` to `destination`.
 
@@ -83,6 +83,12 @@ def sync(source, destination, mode="update", flags=None, compress=False,
 	           ("sudo", "ionice", "-c2", "-n4") to throttle I/O priority so
 	           a sync doesn't compete with a live experiment.
 	remove_source: pass --remove-source-files (move rather than copy).
+	itemize:   pass --itemize-changes -- the result's .stdout then has one
+	           line per file actually transferred (see changed_files()),
+	           instead of no output at all on success. Opt-in and additive
+	           to whatever `mode`/`flags` already computed, so it doesn't
+	           change behavior for existing callers (ExpSync) that don't
+	           ask for it.
 
 	Returns the completed subprocess.CompletedProcess; does not raise on a
 	non-zero exit, so a failed sync doesn't take down its caller -- check
@@ -101,6 +107,8 @@ def sync(source, destination, mode="update", flags=None, compress=False,
 		flags.append("--dry-run")
 	if remove_source:
 		flags.append("--remove-source-files")
+	if itemize:
+		flags.append("--itemize-changes")
 	for pattern in excludes:
 		flags.append(f"--exclude={pattern}")
 
@@ -109,3 +117,29 @@ def sync(source, destination, mode="update", flags=None, compress=False,
 	if result.returncode != 0:
 		log.error(f"rsync failed ({result.returncode}): {result.stderr.strip()}")
 	return result
+
+
+## AI Generated -- itemize= param above and changed_files() below, added
+## by Claude (Anthropic) for sync_config.py's itemized-change reporting.
+def changed_files(result):
+	"""Filenames a sync(..., itemize=True) result actually transferred,
+	parsed from its --itemize-changes stdout. Each such line is a
+	change-code column, a space, then the path (verified directly:
+	`>f+++++++++ file.txt` for a new file, `>f..t...... file.txt` for an
+	updated one) -- splitting on the first run of whitespace avoids
+	assuming an exact column width, which varies with rsync version/flags.
+	A file whose contents/timestamp didn't need transferring never gets a
+	line at all, so this list is exactly "what changed", not "what was
+	compared".
+
+	Only regular files are included -- the code's 2nd character is the
+	file-type indicator (verified directly: 'f' for a file, 'd' for a
+	directory), and a directory's own line (e.g. ".d..t.... ./") is just
+	rsync bumping that directory's timestamp attributes, not a file
+	anyone synced actually changing."""
+	files = []
+	for line in result.stdout.splitlines():
+		parts = line.split(None, 1)
+		if len(parts) == 2 and len(parts[0]) > 1 and parts[0][1] == "f":
+			files.append(parts[1])
+	return files

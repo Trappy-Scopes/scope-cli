@@ -242,6 +242,37 @@ ScopeAssembly:
 
   + The configuration is defined in `core.permaconfig.config.py` as `TrappyConfig`. It uses the [Confuse](https://confuse.readthedocs.io/en/latest/usage.html#confuse-painless-configuration) library as a base.
 
+### Layering additional configuration files
+
+<!-- AI Generated -- section added by Claude (Anthropic), 2026-09 -->
+
+
+`config.config_files` (a list of paths) layers extra YAML files on top of
+the primary `trappyconfig.yaml` -- see the launcher's Install/setup
+submenu, "Create additional configuration file". This is how a shared lab
+manifest (common repos, protocols, script directories) applies across
+every device without copy-pasting it into each device's own file by hand.
+
+**Most fields declared in an appended file *replace* the primary file's
+value at that key -- they do not merge with it.** Confuse itself has no
+merge mechanism at all; it always resolves a key to whichever layered
+source has the highest priority, in full. A small, explicit set of fields
+is the exception and *expands* (unions) across every layered file instead,
+implemented by hand in `TrappyConfig.expanded()`:
+
+| Field | Behavior | Why |
+|---|---|---|
+| `config.git_dependencies` | **Expands** -- dict union, read via `TrappyConfig.current.expanded("config", "git_dependencies")` | A lab manifest should add a shared repo without disturbing whatever repos a device already declares for itself |
+| `Experiment.scripts_dirs` | **Expands** -- list union, de-duplicated, read via `TrappyConfig.current.expanded("Experiment", "scripts_dirs")` | A lab manifest should add a shared scripts directory without replacing a device's own |
+| Everything else (`config.venv`, `config.micropython.*`, `config.set_wallpaper`, `config.log_level`, `config.ui_mode`, `devices`, `abstraction`, `Experiment.exp_dir`/`protocols_dirs`/`calibration_dir`/`exp_dir_structure`, ...) | **Replaces** -- the highest-priority source wins outright (later entries in `config_files` outrank earlier ones, which outrank the primary file) | These are genuinely per-device settings. A lab manifest deliberately overriding one (e.g. pointing every device at the same `protocols_dirs`) is a real, intended use -- replace, not merge, is the *correct* behavior here |
+
+New fields default to **replace** semantics. Expand is opt-in per field,
+added explicitly at the one call site that reads it -- never inferred
+automatically from whether a value happens to be a dict or a list, since
+that alone doesn't say what the field *means* (a list can just as easily
+be "this device's own value, full stop"). If a new field needs expand
+semantics, add a row to this table and change its reader to call
+`.expanded()` instead of bracket-chaining to a leaf's `.get()`.
 
 ##  Basic Usage
 

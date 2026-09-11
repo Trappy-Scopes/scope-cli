@@ -47,13 +47,21 @@ def _status(path):
 	return dirty, ahead, behind, None
 
 
-def all_repos(config=None):
+def all_repos():
 	"""{label: path} -- config.git_dependencies plus trappyscopes' own
 	repo (Share.scopecli_fullpath, the same path _version_line() in
-	tui.py already reads its commit from)."""
-	if config is None:
-		config = TrappyConfig().get()
-	repos = {path: path for path in ((config.get("config") or {}).get("git_dependencies") or {}).values()}
+	tui.py already reads its commit from).
+
+	AI Generated -- git_dependencies is an "expand" field (see README's "Expanded config
+	fields" table): a lab-wide manifest appended via config.config_files
+	should be able to add shared repos without disturbing whatever this
+	device's own primary trappyconfig.yaml already declares, so this
+	reads it via TrappyConfig.expanded(), not a plain dict .get() chain
+	-- the latter would let the higher-priority source silently replace
+	the other's entries wholesale instead of union them."""
+	TrappyConfig()  # ensures TrappyConfig.current is set, same as everywhere else
+	git_dependencies = TrappyConfig.current.expanded("config", "git_dependencies")
+	repos = {path: path for path in git_dependencies.values()}
 	repos[_SELF_LABEL] = Share.scopecli_fullpath
 	return repos
 

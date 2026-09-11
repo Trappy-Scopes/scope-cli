@@ -35,6 +35,24 @@ def run(console=None):
 
 	repo_sync.check_and_sync(console=console)
 
+	## AI Generated -- moved here from expenv/recipes/freestyle.py.
+	## After repo sync, not before -- so the wallpaper's version line
+	## reflects whatever code a pull just brought in, not the commit that
+	## was checked out when the launcher started.
+	from core.permaconfig.config import TrappyConfig
+	config = TrappyConfig().get()
+	if config["config"]["set_wallpaper"]:
+		## AI Generated -- wallpaper generation is a cosmetic nice-to-have,
+		## not something that should ever take the whole launcher down
+		## with it (confirmed: it did, via a stale asset path after the
+		## utilities/ -> core/utilities/ move). Report and move on.
+		try:
+			from core.utilities.wallpaper import generate_wallpaper, set_wallpaper
+			wallpaper_path = generate_wallpaper(config)
+			set_wallpaper(wallpaper_path)
+		except Exception as e:
+			console.print(f"[yellow]Wallpaper generation failed, skipping: {e}[/yellow]")
+
 	boot_.boot()
 
 

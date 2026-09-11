@@ -2,7 +2,7 @@
 
 
 def show():
-	from utilities.fluff import intro
+	from core.utilities.fluff import intro
 	intro()
 
 

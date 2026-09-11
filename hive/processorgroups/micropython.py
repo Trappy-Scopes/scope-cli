@@ -2,7 +2,7 @@ import platform
 import logging as log
 import os
 
-from utilities.resolvetypes import resolve_type
+from core.utilities.resolvetypes import resolve_type
 from core.external import pyboard
 from rich import print
 

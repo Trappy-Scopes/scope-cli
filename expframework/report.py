@@ -4,7 +4,7 @@ import yaml
 
 from rich.pretty import Pretty
 from rich import print
-from utilities import fluff
+from core.utilities import fluff
 import datetime
 import os
 from core.bookkeeping.session import Session

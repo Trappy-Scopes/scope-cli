@@ -78,8 +78,13 @@ def _missing(names):
 
 
 def _scripts_dirs(console):
-	config = TrappyConfig().get()
-	scripts_dirs = (config.get("Experiment") or {}).get("scripts_dirs") or []
+	## AI Generated -- Experiment.scripts_dirs is an "expand" field (README's "Expanded
+	## config fields" table) -- unioned across every layered source via
+	## TrappyConfig.expanded(), not a plain-dict .get() chain, so a
+	## lab-wide manifest can add shared script directories without
+	## silently replacing this device's own.
+	TrappyConfig()
+	scripts_dirs = TrappyConfig.current.expanded("Experiment", "scripts_dirs")
 	if not scripts_dirs:
 		console.print("[dim]Experiment.scripts_dirs is not declared -- nothing to check.[/dim]")
 	return scripts_dirs

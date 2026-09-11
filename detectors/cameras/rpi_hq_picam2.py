@@ -22,7 +22,7 @@ from threading import Event
 ## TS imports
 from core.bookkeeping.yamlprotocol import YamlProtocol
 from core.permaconfig.sharing import Share
-from core.precision.timing import precise_sleep
+from core.idioms.precisetiming import precise_sleep
 from detectors.cameras.abstractcamera import Camera as AbstractCamera
 
 from expframework.experiment import Experiment

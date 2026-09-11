@@ -43,6 +43,32 @@ def _min_python_version():
 	return "3.12"
 
 
+def status():  # AI Generated -- extracted from check() below for the Install/setup status panel
+	"""(ready: bool, detail: str) -- read-only, no prompts, safe to call
+	on every "Install / setup" menu redraw. Shared by check() (which adds
+	the interactive create-it-now flow on top) and the status panel."""
+	config = TrappyConfig().get()
+	venv = TrappyConfig.optional_block(config, "config", "venv")
+	if venv is None:
+		return True, "not declared or inactive -- nothing required"
+
+	name = venv.get("name")
+	command = venv.get("command", "")
+	if not name or "conda" not in command.lower():
+		return False, "declared, but not a conda command -- can't check automatically"
+
+	exe = shutil.which("mamba") or shutil.which("conda")
+	if not exe:
+		return False, "no conda/mamba on PATH -- can't check automatically"
+
+	result = subprocess.run([exe, "env", "list"], capture_output=True, text=True)
+	existing = {line.split()[0] for line in result.stdout.splitlines()
+				if line and not line.startswith("#")}
+	if name in existing:
+		return True, f"{name} exists"
+	return False, f"{name} does not exist yet"
+
+
 def check(console=None):
 	console = console or Console()
 	config = TrappyConfig().get()
@@ -55,26 +81,18 @@ def check(console=None):
 	command = venv.get("command", "")
 	console.print(f"Declared venv: [bold]{name}[/bold]  (activated via: {command})")
 
-	## "miniconda"/"anaconda" both already contain "conda" as a substring,
-	## so checking for that alone covers all three.
-	if not name or "conda" not in command.lower():
-		console.print("[yellow]This doesn't look like a conda activation command -- "
-					   "can't check existence automatically.[/yellow]")
+	ready, detail = status()
+	console.print(f"[{'green' if ready else 'yellow'}]{detail}.[/{'green' if ready else 'yellow'}]")
+	if ready:
 		return
 
+	## Only offer to create it when the reason isn't "can't check
+	## automatically" (a non-conda command, or no conda/mamba on PATH) --
+	## in those cases there's nothing this function can act on.
 	exe = shutil.which("mamba") or shutil.which("conda")
-	if not exe:
-		console.print("[yellow]No conda/mamba on PATH -- can't check existence automatically.[/yellow]")
+	if not name or "conda" not in command.lower() or not exe:
 		return
 
-	result = subprocess.run([exe, "env", "list"], capture_output=True, text=True)
-	existing = {line.split()[0] for line in result.stdout.splitlines()
-				if line and not line.startswith("#")}
-	if name in existing:
-		console.print(f"[green]{name} already exists.[/green]")
-		return
-
-	console.print(f"[yellow]{name} does not exist yet.[/yellow]")
 	if not Confirm.ask(f"Create conda environment '{name}' now?", default=True):
 		return
 

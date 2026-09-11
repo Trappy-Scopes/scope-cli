@@ -147,12 +147,12 @@ Share.argparse["nofluff"] = args.nofluff
 Share.argparse["launcher"] = args.launcher
 
 if args.intro:
-    from utilities.fluff import intro
+    from core.utilities.fluff import intro
     intro()
     exit(0)
 
 if args.tomp4_exp:
-    from utilities.mp4box import MP4Box
+    from core.utilities.mp4box import MP4Box
     args.tomp4_exp = args.tomp4_exp[0]
     args.tomp4_exp = os.path.join(Share.expdir, args.tomp4_exp)
     if os.path.exists(args.tomp4_exp):

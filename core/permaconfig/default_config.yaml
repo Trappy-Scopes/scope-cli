@@ -25,13 +25,16 @@
 ## in this lib do not parse comments, so this text will not be pasted in the actual     ##
 ## configuration file.                                                                  ##
 ## -------------------------------------------------------------------------------------##
+## AI Generated -- keys added by Claude (Anthropic), 2026-09: config.keyboard_shortcuts, ##
+## Experiment.record_edit_history/protocols_dirs/protocols. config.trappydir and         ##
+## Experiment.protocols_dir (singular, stale) were removed as dead/superseded.           ##
+## -------------------------------------------------------------------------------------##
 
 name: <TrappySomething>            ## Name of the scope (scopeid)
 
 
 ## Trappy-Scopes configuration options
 config:
-  trappydir: ~/trappyverse   # Directory where the configuration of the scope is stored.
   config_files: []           # Append more configuration files
   ui_mode: interactive       # User interaction mode
   autostart_cli_after_reboot: false  # Reserved for a future feature. Not yet read by any code.
@@ -73,6 +76,16 @@ config:
                                   # subfolder inside it) -- mirrored onto a device's own
                                   # filesystem root, filtered by that repo's own
                                   # sync_what.yaml if it declares one.
+  keyboard_shortcuts:             # Esc-prefixed REPL shortcuts -- see utilities/keyboard_shortcuts.py
+    active: false                 # Config block is active. The function is turned on.
+    scope_assembly: true          # Auto-bind Esc,s,<letter> per mounted device (only if active: true)
+    experiment: true              # Auto-bind the Esc,e,<letter> Experiment member table (only if active: true)
+    file:                         # Optional separate YAML file, its own top-level `bindings:` list
+    bindings: []                  # Optional inline list, e.g.:
+                                   #   - keys: "esc x"
+                                   #     code: "scope.draw_tree()"
+                                   #     submit: true
+                                   #     description: "My shortcut"
 
 ## Experiment configuration options
 Experiment:
@@ -82,7 +95,16 @@ Experiment:
                                        # describes the target format and is not read yet -- see
                                        # docs/notes/restructuring.md §12.
   exp_dir: ~/experiments              # Default directory where experiments are stored
-  protocols_dir: ~/lab_protocols      # Directory where protocols are stored, This can also be a git-address.
+  record_edit_history: true           # Whether editing a recordset() entry also appends to
+                                       # event_edits.yaml (a separate trail, not inline in
+                                       # experiment.yaml -- see docs/notes/protocols.md §8).
+  protocols_dirs: []                  # Local clone(s) expframework.protocol.Protocol resolves from --
+                                       # see config.git_dependencies to have one cloned automatically
+                                       # and docs/notes/protocols.md for the resolution/provenance design.
+  protocols:
+    publish_remote_link: true         # Record each loaded protocol's GitHub permalink (derived from
+                                       # local git metadata, no network call) in the experiment log.
+                                       # Overridable per file via that file's own frontmatter.
   calibration_dir: ~/calibration_dir  # Directory where calibrations are stored.
   exp_dir_structure:                  # This is the directory structure, that will be created within every experiment.
     - scripts
